@@ -154,6 +154,69 @@ def test_script_without_signs_comes_back_unchanged():
     lines = fix(src, raw=True)
     assert [l for l in lines if l.strip()] == [l for l in src.splitlines() if l.strip()]
 
+def test_ts_rounds_to_whole_centiseconds():
+    sys.path.insert(0, HERE)
+    from fixsigns import ts
+    assert ts(119.996) == '0:02:00.00' and ts(3599.999) == '1:00:00.00' and ts(61.234) == '0:01:01.23'
+
+# fixep.py decisions, on track listings shaped like mkvmerge -J output
+def trk(i, kind, lang, name='', **flags):
+    return {'id': i, 'type': kind, 'properties': {'language': lang, 'track_name': name, **flags}}
+
+NETFLIX = [trk(0, 'video', 'jpn'), trk(1, 'audio', 'jpn'), trk(2, 'audio', 'jpn'),
+           trk(3, 'subtitles', 'eng', 'NF_English'), trk(4, 'subtitles', 'eng', 'NF_English(SDH)'),
+           trk(5, 'subtitles', 'por', 'NF_Portuguese'), trk(6, 'subtitles', 'jpn', 'NF_Japanese'),
+           trk(7, 'subtitles', 'jpn', 'NF_Japanese(CC)')]
+
+def fixep():
+    sys.path.insert(0, HERE)
+    import fixep
+    return fixep
+
+def test_pick_skips_sdh_forced_and_our_own_track():
+    f = fixep()
+    subs = [x for x in NETFLIX if x['type'] == 'subtitles']
+    assert f.pick(subs, 'eng', False)['id'] == 3 and f.pick(subs, 'jpn', False)['id'] == 6
+    assert f.pick(subs, 'jpn', True)['id'] == 7
+    ours = [trk(8, 'subtitles', 'eng', 'NF_English (signs fixed v2)'), trk(9, 'subtitles', 'eng', 'NF_English (signs fixed)')] + subs
+    assert f.pick(ours, 'eng', False)['id'] == 3  # --force rebuilds from the original, not from our output
+    assert f.pick([trk(1, 'subtitles', 'eng', 'Signs & Songs'), trk(2, 'subtitles', 'eng', 'Accessible')],
+                  'eng', False)['id'] == 2  # whole words: "Accessible" isn't CC
+
+def test_fixed_track_versions():
+    f = fixep()
+    assert f.fixed_version('NF_English (signs fixed v2)') == 2 and f.fixed_version('NF_English (signs fixed v13)') == 13
+    assert f.fixed_version('NF_English (signs fixed)') == 1  # tracks from before versioning
+    assert f.fixed_version('NF_English') is None and f.fixed_version('Signs fixed by fansubber') is None
+
+def test_only_japanese_audio_with_japanese_subs_is_a_candidate():
+    f = fixep()
+    assert f.candidate(NETFLIX)
+    western = [trk(0, 'video', 'und'), trk(1, 'audio', 'eng'), trk(2, 'subtitles', 'eng', 'English SDH'),
+               trk(3, 'subtitles', 'fre', 'French')]
+    crunchyroll = [trk(0, 'video', 'und'), trk(1, 'audio', 'jpn'), trk(2, 'subtitles', 'eng', 'English subs')]
+    with_jpn_subs = western + [trk(4, 'subtitles', 'jpn', 'Japanese')]  # English audio: not anime, leave it
+    assert not f.candidate(western) and not f.candidate(crunchyroll) and not f.candidate(with_jpn_subs)
+
+def test_remux_plan_keeps_all_subs_unless_strip_and_replaces_an_earlier_fixed_track():
+    f = fixep()
+    keep, order, want = f.plan_remux(NETFLIX, NETFLIX[3])
+    assert keep == [3, 4, 5, 6, 7] and order == ['1:0', '1:1', '1:2', '0:0', '1:3', '1:4', '1:5', '1:6', '1:7'] and want == 9
+    keep, order, want = f.plan_remux(NETFLIX, NETFLIX[3], strip=True)  # opt-in: Portuguese dropped
+    assert keep == [3, 4, 6, 7] and order == ['1:0', '1:1', '1:2', '0:0', '1:3', '1:4', '1:6', '1:7'] and want == 8
+    again = NETFLIX[:3] + [trk(9, 'subtitles', 'eng', 'NF_English (signs fixed v1)')] + NETFLIX[3:]
+    keep, order, want = f.plan_remux(again, NETFLIX[3])
+    assert 9 not in keep and order.count('0:0') == 1 and want == 9
+
+def test_lock_is_exclusive_and_taken_over_from_a_dead_run():
+    f = fixep()
+    with tempfile.TemporaryDirectory() as d:
+        held = f.lock(d)
+        assert held and f.lock(d) is None  # our own pid is alive
+        os.remove(held)
+        open(os.path.join(d, 'lock'), 'w').write('999999')  # no such process
+        assert f.lock(d)
+
 if __name__ == '__main__':
     tests = [f for n, f in sorted(globals().items()) if n.startswith('test_')]
     for f in tests:

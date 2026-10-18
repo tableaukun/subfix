@@ -1,24 +1,15 @@
 -- subfix: when an MKV opens, run fixep.py in the background (playback isn't held up), then load and select the
--- fixed English subs. fixep.py also embeds the fixed track in the file, so later plays skip all of this.
+-- fixed English subs. fixep.py also embeds the fixed track in the file, so later plays of a current file skip it.
 -- Install (macOS/Linux): ln -s /path/to/subfix/mpv/subfix.lua ~/.config/mpv/scripts/
 -- If the script is copied rather than symlinked (e.g. Windows), set the repo path in
 -- script-opts/subfix.conf:  fixep=C:\path\to\subfix\fixep.py   (optional: python=py)
+-- strip=yes in script-opts/subfix.conf also drops non-English/Japanese subtitle tracks (default: keep all)
 local utils = require 'mp.utils'
 local options = require 'mp.options'
 local windows = package.config:sub(1, 1) == '\\'
-local opts = {fixep = '', python = windows and 'python' or 'python3'}
+local opts = {fixep = '', python = windows and 'python' or 'python3', strip = false}
 options.read_options(opts, 'subfix')
 
-local function fixep_path()
-    if opts.fixep ~= '' then return opts.fixep end
-    -- follow the symlink in mpv's scripts dir back to the repo: <repo>/mpv/subfix.lua -> <repo>/fixep.py
-    local me = debug.getinfo(1, 'S').source:gsub('^@', '')
-    local r = mp.command_native({name = 'subprocess', capture_stdout = true, playback_only = false,
-        args = {opts.python, '-c', 'import os,sys;print(os.path.realpath(sys.argv[1]))', me}})
-    local real = r.status == 0 and r.stdout:gsub('%s+$', '') or me
-    local repo = utils.split_path(utils.split_path(real):gsub('[/\\]$', ''))
-    return utils.join_path(repo, 'fixep.py')
-end
 
 local function environment()
     -- mpv started from the macOS Finder doesn't see Homebrew. Returns nil (inherit) when PATH already has
@@ -37,20 +28,35 @@ local function environment()
     return env
 end
 
-local FIXEP = fixep_path()
+local ME = debug.getinfo(1, 'S').source:gsub('^@', '')
+local FIXEP  -- resolved on the first MKV, not at every mpv start
+
+local function fixep_path()
+    if opts.fixep ~= '' then return opts.fixep end
+    -- follow the symlink in mpv's scripts dir back to the repo: <repo>/mpv/subfix.lua -> <repo>/fixep.py
+    local r = mp.command_native({name = 'subprocess', capture_stdout = true, playback_only = false, env = environment(),
+        args = {opts.python, '-c', 'import os,sys;print(os.path.realpath(sys.argv[1]))', ME}})
+    if r.status ~= 0 then return nil end
+    local repo = utils.split_path(utils.split_path(r.stdout:gsub('%s+$', '')):gsub('[/\\]$', ''))
+    return utils.join_path(repo, 'fixep.py')
+end
 
 mp.register_event('file-loaded', function()
     local opened = mp.get_property('path')
     if not opened or opened:match('^%a%a+://') or not opened:lower():match('%.mkv$') then return end
-    for _, t in ipairs(mp.get_property_native('track-list', {})) do
-        if t.type == 'sub' and t.title and t.title:match('%(signs fixed%)$') then return end  -- already fixed
-    end
+    -- no track-name check here: fixep.py compares the fixed track's version with its own and returns at once
+    -- (one mkvmerge -J) when the file is current, so bumping VERSION there redoes older files on their next open
     local absolute = opened:match('^/') or opened:match('^%a:[/\\]') or opened:match('^\\\\')
     local abs = absolute and opened or utils.join_path(mp.get_property('working-directory'), opened)
-    mp.msg.info('fixing subs in the background (' .. FIXEP .. ')')
+    FIXEP = FIXEP or fixep_path()
+    if not FIXEP then
+        mp.msg.warn("can't run '" .. opts.python .. "': install Python 3 or set python= in script-opts/subfix.conf")
+        return
+    end
+    mp.msg.info('checking subs in the background (' .. FIXEP .. ')')
     mp.command_native_async({
         name = 'subprocess', playback_only = false, capture_stdout = true, capture_stderr = true,
-        env = environment(), args = {opts.python, '-I', FIXEP, abs},
+        env = environment(), args = {opts.python, '-I', FIXEP, abs, opts.strip and '--strip' or nil},
     }, function(ok, res)
         if not ok or res.status ~= 0 then
             mp.msg.warn('fixep.py failed: ' .. ((res and (res.stderr ~= '' and res.stderr or res.error_string)) or '?'))

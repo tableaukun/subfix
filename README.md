@@ -30,15 +30,19 @@ Get-ChildItem C:\path\to\season\*.mkv | % { python fixep.py $_.FullName }  # Win
 
 Each file takes about 40 s (most of it shot-change detection). What it prints:
 
-- `updated: … (default English: … (signs fixed))`: fixed
+- `updated: … (default English: … (signs fixed v2))`: fixed
+- `already fixed (v2): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
+  overrides). A file fixed by an older version is redone automatically
+- `not a Japanese-audio release with Japanese subs: skipped`: only Netflix-style anime is touched (Japanese audio
+  plus a Japanese subtitle track as the timing reference), never e.g. a Western film
 - `no ALL-CAPS signs …: nothing to fix`: subs aren't Netflix-style (e.g. typeset Crunchyroll subs); file untouched
-- `already has a "(signs fixed)" track: skipped`: done before; add `--force` to redo it (e.g. after editing its
-  overrides)
+- `another run is fixing this episode: skipped`: e.g. two mpv windows on one file
 
-The fixed subs are added to the same file as the default English track, just before the original English track
-(kept, no longer default). Only English and Japanese subtitle tracks are kept; video, audio, fonts and chapters are
-untouched. The file is rewritten to a temp copy next to it, checked, then swapped in, so a failed run leaves the
-original as it was.
+The fixed subs are added to the same file as the default English track, named `<original> (signs fixed vN)`, just
+before the original English track (kept, no longer default). Every other track is kept. With `--strip`, subtitle
+tracks other than English and Japanese are removed for good (opt-in). The file is rewritten to a hidden temp copy
+next to it, checked, then swapped in, so a failed or killed run leaves the original as it was. A symlinked episode
+is fixed at its target.
 
 ## What it fixes
 
@@ -69,8 +73,9 @@ then rerun with `--force`. Without overrides, everything else is still fixed.
 ## mpv
 
 `mpv/subfix.lua` runs `fixep.py` in the background whenever an MKV opens, then loads and selects the fixed English
-subs (about 40 s in). Files that already have a "(signs fixed)" track are skipped, so files fixed beforehand
-start straight away. macOS: Homebrew is found even when mpv starts from Finder.
+subs (about 40 s in). Files already fixed by the current version are skipped in a fraction of a second, so files
+fixed beforehand start straight away; files fixed by an older version are redone. macOS: Homebrew is found even
+when mpv starts from Finder. Add `strip=yes` to `script-opts/subfix.conf` for the `--strip` behaviour.
 
 - macOS / Linux: `ln -s /path/to/subfix/mpv/subfix.lua ~/.config/mpv/scripts/` (the symlink is followed back
   to the repo)
@@ -78,6 +83,12 @@ start straight away. macOS: Homebrew is found even when mpv starts from Finder.
   `fixep=C:\path\to\subfix\fixep.py` (and `python=py` if `python` isn't on PATH). Windows can't replace a file
   that's playing, so the fix loads for that session but isn't embedded.
 
+## Versions
+
+`VERSION` in `fixep.py` is stamped into the fixed track's name. Bump it whenever a change would alter the output;
+every file fixed by an older version is then redone on its next run or mpv open.
+
 ## Tests
 
-`python3 test_fixsigns.py` (stdlib only, made-up scripts, one case per rule).
+`python3 test_fixsigns.py` (stdlib only): made-up scripts, one case per timing rule, plus fixep.py's track
+picking, remux plan, versions and lock on track listings shaped like `mkvmerge -J`.
