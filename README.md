@@ -1,0 +1,26 @@
+# subfix
+
+Fixes English subs in streaming-sourced anime MKVs (Netflix, and others with the same style).
+Netflix-style subs never show a sign and dialogue at the same time, so on-screen-text translations
+(ALL-CAPS lines) and dialogue get delayed or cut short around each other.
+
+```
+python3 fixep.py "/path/to/episode.mkv"
+```
+
+Writes `<name>[fixed-eng].mkv` next to the input (the original is left alone). It:
+
+- moves signs to their own top-of-screen `Sign` style and extends them over the dialogue that cut them off
+- restores dialogue start/end times from the Japanese track's timing (first `jpn` subtitle track without CC in its name)
+- writes contact sheets to `work/<episode>/sheets/` for every sign that directly follows dialogue
+  (12 frames from that dialogue's start to the sign; `index.txt` maps rows to signs and frame times)
+
+Signs Netflix held back behind dialogue can't be detected reliably (scene-cut detection got 3/7),
+so their real start is picked by eye from the sheets into `overrides/<episode>.txt`:
+
+```
+# sign_start  new_start
+0:06:59.12 0:06:56.33
+```
+
+then rerun `fixep.py`. Requires `mkvtoolnix` and `ffmpeg`.
