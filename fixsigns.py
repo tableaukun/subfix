@@ -1,23 +1,31 @@
-# Streaming-style ASS (Netflix etc.) -> signs get own top style and are extended over the dialogue they were serialized against.
-# Optional 3rd arg: a Japanese-audio track of the same release, used to undo dialogue that was
-# delayed or truncated to make room for a sign.
-# Optional 4th arg: sign start overrides, lines of "old_start new_start" (ASS times), for signs held back
-# behind dialogue. Picked by eye from frames; scene-cut detection got only 3 of 7 right.
-# usage: fixsigns.py in.ass out.ass [jpn.ass|-] [overrides.txt]
-import sys, re
-src, dst = sys.argv[1:3]
-ref = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] != '-' else None
-ovr_file = sys.argv[4] if len(sys.argv) > 4 else None
+# Streaming-style ASS (Netflix etc.) -> signs get own style and their timing is un-serialized from the dialogue
+# (streaming subs never show a sign and dialogue at once, so one of them gets delayed or cut short).
+#   --jpn  Japanese-audio track of the same release: restores dialogue that was delayed/cut short by a sign
+#   --cc   Japanese CC track: lines entirely in （…） are sound labels; they give real start/end for SFX signs
+#   --overrides  lines of "old_start new_start" (ASS times) for signs held back behind dialogue, picked by eye
+#                from contact sheets (scene-cut detection got only 3 of 7 right)
+# usage: fixsigns.py in.ass out.ass [--jpn J] [--cc C] [--overrides O]
+import argparse, re
+ap = argparse.ArgumentParser()
+ap.add_argument('src'); ap.add_argument('dst')
+ap.add_argument('--jpn'); ap.add_argument('--cc'); ap.add_argument('--overrides')
+a = ap.parse_args()
 GAP, CAP = 0.3, 5.0  # ponytail: heuristic; sign's true on-screen time is unknown, cap keeps it sane
-ADJ, SNAP, GROW = 0.15, 0.1, 2.0  # adjacency to sign, "already aligned" tolerance, max end extension
+ADJ, SNAP = 0.15, 0.1  # adjacency to a sign, "already aligned" tolerance
 
 def t(s): h, m, x = s.split(':'); return int(h)*3600 + int(m)*60 + float(x)
 def ts(v): return f"{int(v//3600)}:{int(v%3600//60):02d}:{v%60:05.2f}"
 def plain(txt): return re.sub(r'\{[^}]*\}', '', txt).replace('\\N', ' ')
-def issign(txt): p = plain(txt); return sum(c.isalpha() for c in p) >= 2 and p == p.upper()
+def issign(txt):  # ALL-CAPS Latin text; kana/kanji have no case so never count
+    letters = [c for c in plain(txt) if c.isalpha()]
+    return len(letters) >= 2 and all(c.isupper() for c in letters)
+def cues(path):
+    return [(t(q[1]), t(q[2]), q[9]) for q in (l.rstrip('\n').split(',', 9) for l in open(path, encoding='utf-8-sig')
+                                               if l.startswith('Dialogue:'))]
 
-lines = open(src, encoding='utf-8-sig').read().splitlines()
-head, ev = [], []
+lines = open(a.src, encoding='utf-8-sig').read().splitlines()
+has_sign_style = any(l.startswith('Style: Sign,') for l in lines)
+head, ev = [], []  # ev: [start, end, is_sign, fields, fixed_by_cc]
 for l in lines:
     if l.startswith('Dialogue:'):
         p = l.split(',', 9)
@@ -28,16 +36,17 @@ for l in lines:
             p[3] = 'Sign'
             txt = re.sub(r'\\an\d', '', txt).replace('{}', '')
         p[9] = txt
-        ev.append([t(p[1]), t(p[2]), sign, p])
+        ev.append([t(p[1]), t(p[2]), sign, p, False])
     else:
         head.append(l)
-        if l.startswith('Style:') and not any(h.startswith('Style: Sign,') for h in head[:-1]):
+        if l.startswith('Style:') and not has_sign_style:
             f = l.split(',')  # base Sign on the first style, whatever it is called: 85% size, top-center
             f[0], f[2], f[18] = 'Style: Sign', str(round(float(f[2]) * 0.85)), '8'
             head.append(','.join(f))
+            has_sign_style = True
 
-if ref:
-    jp = [(t(q[1]), t(q[2])) for q in (l.split(',', 9) for l in open(ref, encoding='utf-8-sig') if l.startswith('Dialogue:'))]
+if a.jpn:
+    jp = [(s, e) for s, e, _ in cues(a.jpn)]
     dlg = [e for e in ev if not e[2]]
     for i, e in enumerate(ev):
         if e[2]: continue
@@ -50,36 +59,69 @@ if ref:
             if cand:
                 print(f"start {ts(e[0])} -> {ts(max(cand))}  {plain(e[3][9])[:40]}")
                 e[0] = max(cand)
-        # truncated: ends right before a sign and the matching Japanese line runs longer
+        # truncated: ends right before a sign and the Japanese speech it covers runs longer.
+        # Pair by overlap, not start: the English line may start early (chained to the previous line)
+        # or merge several Japanese lines.
         if i + 1 < len(ev) and ev[i+1][2] and ev[i+1][0] - e[1] < ADJ:
-            m = [k for k, (s, _) in enumerate(jp) if abs(s - e[0]) <= ADJ]
-            if m:
-                # English line may merge several Japanese lines: follow ones that start while it is still up
-                k = m[-1]
-                while k + 1 < len(jp) and jp[k+1][0] < e[1] and jp[k+1][0] - jp[k][1] < GAP:
-                    k += 1
-                new = min(jp[k][1], e[1] + GROW, next_start - 0.02)
+            ends = [x for s, x in jp if e[0] - ADJ <= s < e[1]]
+            if ends:
+                new = min(max(ends), next_start - 0.02)
                 if new > e[1]:
                     print(f"end   {ts(e[1])} -> {ts(new)}  {plain(e[3][9])[:40]}")
                     e[1] = new
 
-for i, e in enumerate(ev):
-    if not e[2]: continue
-    end, j = e[1], i + 1
-    while j < len(ev) and not ev[j][2] and ev[j][0] - end <= GAP and ev[j][1] - e[0] <= CAP:
-        end = ev[j][1]; j += 1
-    e[1] = end
-
-if ovr_file:
-    ovr = dict(l.split() for l in open(ovr_file) if l.strip() and not l.startswith('#'))
+if a.cc:
+    # sound labels, with consecutive cues of the same label merged (CC splits cues at overlap boundaries)
+    snd = []
+    for s, x, txt in cues(a.cc):
+        parts = [p.strip() for p in plain(txt.replace('\\N', '\n')).split('\n')]
+        for n, part in enumerate(parts):
+            # a line that is only （…） is a sound label, unless plain dialogue follows (then it's a speaker name)
+            if re.fullmatch(r'-?\s*（[^）]*）', part) and (n + 1 == len(parts) or parts[n+1].lstrip('-').startswith('（')):
+                if snd and snd[-1][2] == part.strip() and s - snd[-1][1] <= SNAP:
+                    snd[-1][1] = max(snd[-1][1], x)
+                else:
+                    snd.append([s, x, part.strip()])
+    used = set()
     for e in ev:
-        if e[2] and ovr.get(e[3][1]):
-            print(f"sign  {e[3][1]} -> {ovr[e[3][1]]}  {plain(e[3][9])[:40]}")
-            e[0] = t(ovr[e[3][1]])
-    signs = sorted((e for e in ev if e[2]), key=lambda e: e[0])
-    for a, b in zip(signs, signs[1:]):
-        a[1] = min(a[1], b[0]) if b[0] > a[0] else a[1]  # don't stack two signs at the top
-    ev.sort(key=lambda e: e[0])
+        if not e[2]: continue
+        # sound must overlap the sign as listed and start no later than it; one sound per sign
+        m = [k for k, (s, x, _) in enumerate(snd) if k not in used and s <= e[0] + SNAP and x > e[0] and s >= e[0] - CAP]
+        if m:
+            k = m[0]; used.add(k)
+            print(f"cc    {ts(e[0])}-{ts(e[1])} -> {ts(min(e[0], snd[k][0]))}-{ts(max(e[1], snd[k][1]))}  "
+                  f"{plain(e[3][9])[:24]} = {snd[k][2]}")
+            e[0], e[1], e[4] = min(e[0], snd[k][0]), max(e[1], snd[k][1]), True
+
+if a.overrides:
+    ovr = {}
+    for l in open(a.overrides):
+        tok = l.split('#')[0].split()
+        if len(tok) >= 2:
+            ovr[round(t(tok[0]), 2)] = t(tok[1])
+    for e in ev:
+        new = ovr.get(round(t(e[3][1]), 2)) if e[2] else None  # keyed on the sign's original start
+        if new is not None:
+            print(f"sign  {e[3][1]} -> {ts(new)}  {plain(e[3][9])[:40]}")
+            e[0] = new
+
+for i, e in enumerate(ev):
+    if not e[2] or e[4]: continue  # CC-timed signs already have a real end
+    # whole following lines only, within CAP of the sign's listed start; a partial extension to CAP
+    # made every short reaction sign (HUH?, HMM?) last exactly 5s
+    end, j, start = e[1], i + 1, t(e[3][1])
+    while j < len(ev) and not ev[j][2] and ev[j][0] - end <= GAP and ev[j][1] - start <= CAP:
+        end = ev[j][1]; j += 1
+    e[1] = max(e[1], end)
+
+signs = sorted((e for e in ev if e[2]), key=lambda e: e[0])
+for x, y in zip(signs, signs[1:]):
+    if y[0] > x[0]: x[1] = min(x[1], y[0])  # don't stack two signs
+for s in signs:
+    # dialogue moved to the top (\an8) because on-screen text is at the bottom: put the sign at the bottom instead
+    if any(not e[2] and '\\an8' in e[3][9] and e[0] < s[1] and s[0] < e[1] for e in ev):
+        s[3][9] = '{\\an2}' + s[3][9]
+ev.sort(key=lambda e: e[0])
 for e in ev:
     e[3][1], e[3][2] = ts(e[0]), ts(e[1])
 
@@ -88,5 +130,5 @@ for l in (l for l in head if l.strip()):  # rebuild with blank lines before sect
     if l.startswith('[') and res: res.append('')
     res.append(l)
 res += [','.join(e[3]) for e in ev]
-open(dst, 'w', encoding='utf-8-sig').write('\n'.join(res) + '\n')
+open(a.dst, 'w', encoding='utf-8-sig').write('\n'.join(res) + '\n')
 print(sum(e[2] for e in ev), 'signs of', len(ev))

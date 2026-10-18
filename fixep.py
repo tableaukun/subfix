@@ -10,31 +10,40 @@ stem = os.path.splitext(os.path.basename(mkv))[0]
 slug = re.sub(r'[^\w.-]+', '_', re.sub(r'\[[0-9A-F]{8}\]$', '', stem)).strip('_')
 wd = os.path.join(root, slug)
 os.makedirs(os.path.join(wd, 'sheets'), exist_ok=True)
-FRAMES, ROWS = 12, 5  # frames per sign strip, strips per sheet
+FRAMES, ROWS, LEAD = 16, 5, 2.0  # frames per sign strip, strips per sheet, seconds before the previous line
 
 def run(*a): return subprocess.run(a, check=True, capture_output=True, text=True).stdout
 def t(s): h, m, x = s.split(':'); return int(h)*3600 + int(m)*60 + float(x)
 
 tracks = json.loads(run('mkvmerge', '-J', mkv))['tracks']
 subs = [x for x in tracks if x['type'] == 'subtitles']
-eng = next(x for x in subs if x['properties'].get('language') == 'eng')
-jpn = next((x for x in subs if x['properties'].get('language') == 'jpn'
-            and 'CC' not in (x['properties'].get('track_name') or '')), None)
-eng_ass, jpn_ass, fixed = (os.path.join(wd, n) for n in ('eng.ass', 'jpn.ass', 'eng.fixed.ass'))
-run('mkvextract', mkv, 'tracks', f"{eng['id']}:{eng_ass}", *([f"{jpn['id']}:{jpn_ass}"] if jpn else []))
+def pick(lang, cc):
+    # cc=False: full subs, not SDH/CC/forced/signs-only; cc=True: the hearing-impaired track
+    for x in subs:
+        pr = x['properties']
+        name = (pr.get('track_name') or '').lower()
+        hi = bool(pr.get('flag_hearing_impaired') or 'cc' in name or 'sdh' in name)
+        if pr.get('language') == lang and hi == cc and (cc or not (pr.get('forced_track') or 'forced' in name or 'sign' in name)):
+            return x
+eng, jpn, jcc = pick('eng', False), pick('jpn', False), pick('jpn', True)
+if not eng: sys.exit('no full English subtitle track found')
+eng_ass, jpn_ass, cc_ass, fixed = (os.path.join(wd, n) for n in ('eng.ass', 'jpn.ass', 'jpncc.ass', 'eng.fixed.ass'))
+run('mkvextract', mkv, 'tracks', *(f"{x['id']}:{p}" for x, p in ((eng, eng_ass), (jpn, jpn_ass), (jcc, cc_ass)) if x))
 
 ovr = os.path.join(here, 'overrides', slug + '.txt')
-args = [eng_ass, fixed, jpn_ass if jpn else '-'] + ([ovr] if os.path.exists(ovr) else [])
+args = [eng_ass, fixed] + (['--jpn', jpn_ass] if jpn else []) + (['--cc', cc_ass] if jcc else []) \
+    + (['--overrides', ovr] if os.path.exists(ovr) else [])
 print(run(sys.executable, '-I', os.path.join(here, 'fixsigns.py'), *args), end='')
 
-# contact sheets: each row = one sign, FRAMES evenly spaced from the preceding dialogue start to the sign start
+# contact sheets: each row = one sign that directly follows another line (so it may have been held back),
+# FRAMES evenly spaced from LEAD s before that line's start to just after the sign's listed start
 ev = [(q[1], re.sub(r'\{[^}]*\}', '', q[9]).replace('\\N', ' ').strip(), q[2])
       for q in (l.split(',', 9) for l in open(eng_ass, encoding='utf-8-sig') if l.startswith('Dialogue:'))]
-sign = lambda s: sum(c.isalpha() for c in s) >= 2 and s == s.upper()
-cand = [(p[0], c[0], c[1]) for p, c in zip(ev, ev[1:]) if sign(c[1]) and not sign(p[1]) and t(c[0]) - t(p[2]) < 0.15]
+sign = lambda s: (lambda L: len(L) >= 2 and all(c.isupper() for c in L))([c for c in s if c.isalpha()])  # as fixsigns.issign
+cand = [(p[0], c[0], c[1]) for p, c in zip(ev, ev[1:]) if sign(c[1]) and t(c[0]) - t(p[2]) < 0.15]
 index, strips = [], []
 for n, (ds, ss, txt) in enumerate(cand):
-    a, b = t(ds), t(ss) + 0.2
+    a, b = max(0, t(ds) - LEAD), t(ss) + 0.2
     step = (b - a) / (FRAMES - 1)
     strip = os.path.join(wd, 'sheets', f'strip{n:03d}.png')
     run('ffmpeg', '-v', 'error', '-ss', f'{a:.3f}', '-t', f'{b - a + step:.3f}', '-i', mkv, '-an', '-sn',
