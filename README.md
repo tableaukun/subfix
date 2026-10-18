@@ -24,3 +24,5 @@ so their real start is picked by eye from the sheets into `overrides/<episode>.t
 ```
 
 then rerun `fixep.py`. Requires `mkvtoolnix` and `ffmpeg`.
+
+Tests: `python3 test_fixsigns.py` (stdlib only, made-up scripts, one case per rule).
