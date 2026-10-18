@@ -111,7 +111,11 @@ if len(new) != len(tracks) - len(subs) + len(keep) + 1 or not first_eng['propert
 if not os.path.exists(mkv):  # moved or deleted meanwhile (e.g. mpv's move-after-play): don't recreate it here
     os.remove(tmp)
     sys.exit('original moved or deleted during the fix: left alone')
-os.replace(tmp, mkv)  # same directory, so the swap is atomic
+try:
+    os.replace(tmp, mkv)  # same directory, so the swap is atomic
+except PermissionError:  # Windows: the player has the file open; fixed subs still load for this session
+    os.remove(tmp)
+    print('file in use, fixed track not embedded (it will be redone next time)')
 print(f"workdir: {wd}\nsheets:  {len(rows)} rows in {(len(rows) + ROWS - 1) // ROWS} sheets ({os.path.join(wd, 'sheets')})\n"
       f"overrides: {ovr if os.path.exists(ovr) else 'none yet'}\nupdated: {mkv} (default English: {first_eng['properties']['track_name']})\n"
       f"fixed-ass: {fixed}")
