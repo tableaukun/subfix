@@ -36,7 +36,9 @@ for l in lines:
         sign = issign(txt)
         if sign:
             p[3] = 'Sign'
-            txt = re.sub(r'\\an\d', '', txt).replace('{}', '')
+        # fixed layout: signs on top (Sign style), dialogue always at the bottom. Netflix lifts dialogue to the top
+        # (\an8) over drawn text, which would now stack with the signs up there
+        txt = re.sub(r'\\an\d', '', txt).replace('{}', '')
         p[9] = txt
         ev.append([t(p[1]), t(p[2]), sign, p, False])
     else:
@@ -129,12 +131,6 @@ if a.cuts:
 signs = sorted((e for e in ev if e[2]), key=lambda e: e[0])
 for x, y in zip(signs, signs[1:]):
     if y[0] > x[0]: x[1] = min(x[1], y[0])  # don't stack two signs
-for s in signs:
-    # dialogue moved to the top (\an8) because on-screen text is at the bottom: put the sign at the bottom instead,
-    # but only if no bottom dialogue overlaps it too (else it would stack with that and jump around; top wins)
-    ov = [e for e in ev if not e[2] and e[0] < s[1] and s[0] < e[1]]
-    if ov and all('\\an8' in e[3][9] for e in ov):
-        s[3][9] = '{\\an2}' + s[3][9]
 ev.sort(key=lambda e: e[0])
 for e in ev:
     e[3][1], e[3][2] = ts(e[0]), ts(e[1])

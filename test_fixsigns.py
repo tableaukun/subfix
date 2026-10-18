@@ -95,11 +95,13 @@ def test_truncated_dialogue_paired_by_overlap_not_start():
                 ass(('0:00:50.60', '0:00:53.20', 'ja')))
     assert ev['well what the hey'][1] == '0:00:53.20'
 
-def test_sign_goes_bottom_when_dialogue_is_on_top():
-    _, ev = fix(ass(('0:01:00.00', '0:01:01.00', 'IRRITATED'),
-                    ('0:01:00.00', '0:01:02.00', '{\\an8}so irritating'),
-                    ('0:01:05.00', '0:01:06.00', 'OTHER SIGN')))
-    assert '{\\an2}IRRITATED' in ev and 'OTHER SIGN' in ev
+def test_dialogue_always_bottom_signs_always_top():
+    # 18:27: "So long as..." was \an8 and stacked under BA-BUMP at the top
+    styles, ev = fix(ass(('0:01:00.00', '0:01:06.00', '{\\an8}BA-BUMP'),
+                         ('0:01:03.00', '0:01:05.00', '{\\an8}{\\i1}so long as{\\i0}'),
+                         ('0:01:07.00', '0:01:08.00', '{\\an8\\i1}lifted{\\i0}')))
+    assert 'BA-BUMP' in ev and ev['BA-BUMP'][2] == 'Sign'
+    assert '{\\i1}so long as{\\i0}' in ev and '{\\i1}lifted{\\i0}' in ev
 
 def test_cc_sound_label_times_sign_but_speaker_name_does_not():
     cc = ass(('0:01:10.00', '0:01:12.60', '（心臓の鼓動）\\N（湊）あれ？'),
@@ -133,13 +135,6 @@ def test_sign_never_runs_past_shot_change_after_listed_end():
                 cuts='11.49\n17.00\n22.00\n', overrides='0:00:20.00 0:00:17.50\n')
     assert ev['WHOA?!'][:2] == ('0:00:10.00', '0:00:11.49')
     assert ev['HELD BACK'][:2] == ('0:00:17.50', '0:00:22.00')  # cut before its listed start doesn't count
-
-def test_sign_stays_top_when_bottom_dialogue_also_overlaps():
-    # BA-BUMP 18:22: overlapped top dialogue once and bottom dialogue three times; moving it made it jump
-    _, ev = fix(ass(('0:02:00.00', '0:02:06.00', 'BA-BUMP'),
-                    ('0:02:00.50', '0:02:02.00', 'bottom line'),
-                    ('0:02:03.00', '0:02:05.00', '{\\an8}top line')))
-    assert 'BA-BUMP' in ev
 
 if __name__ == '__main__':
     tests = [f for n, f in sorted(globals().items()) if n.startswith('test_')]

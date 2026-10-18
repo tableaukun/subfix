@@ -10,7 +10,7 @@ python3 fixep.py "/path/to/episode.mkv"
 
 Writes `<name>[fixed-eng].mkv` next to the input (the original is left alone). It:
 
-- moves signs to their own top-of-screen `Sign` style (bottom when all dialogue alongside was moved to the top)
+- fixed layout: signs on top in their own `Sign` style, dialogue always at the bottom (Netflix's `\an8` lifts are dropped)
   and extends them over the dialogue that cut them off
 - restores dialogue start/end times from the Japanese track's timing (first `jpn` track that isn't CC/SDH)
 - times sound-effect signs from the Japanese CC track's sound labels, e.g. `（心臓の鼓動）` for BA-BUMP
