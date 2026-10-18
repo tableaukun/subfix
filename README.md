@@ -92,14 +92,15 @@ writes contact sheets to `work/<episode>/sheets/` for checking by eye:
 - a `shout?` row for any caps line that starts with a CC line carrying a speaker label (and no sound label): it may
   be a translated shout, not drawn text. If no text is drawn in that row, it's dialogue
 
-`index.txt` maps rows to signs and frame times. Real starts go in `overrides/<episode>.txt`:
+`index.txt` maps rows to signs and frame times. Real starts go in `work/<episode>/overrides.txt`:
 
 ```
 # sign_start  new_start
 0:06:59.12 0:06:56.33  # comments allowed
 ```
 
-then rerun with `--force`. Without overrides, everything else is still fixed.
+then rerun with `--force`. Without overrides, everything else is still fixed. `work/` isn't in git; everything in it
+except `overrides.txt` is rebuilt on each run, so keep that file if you clear it out.
 
 ## mpv
 

@@ -1,7 +1,7 @@
 # One-shot driver: extract the English and original-language subs from a Netflix-sourced MKV, run fixsigns.py, write
 # contact sheets for signs that may have been held back behind dialogue, and remux the fixed track into the same file as the
 # default English (original English and every other track kept; --strip keeps only English + original-language subs).
-# Sign start overrides (picked from the sheets) go in overrides/<slug>.txt; rerun to apply them.
+# Sign start overrides (picked from the sheets) go in <workroot>/<slug>/overrides.txt; rerun to apply them.
 # usage: fixep.py episode.mkv [workroot] [--force] [--strip]   (default workroot: ./work next to this script)
 #   the fixed track is named "<original> (signs fixed vN)"; a file whose fixed track is already at VERSION is
 #   skipped unless --force (e.g. after editing its overrides). Bump VERSION whenever the output would change,
@@ -205,7 +205,7 @@ def main():
         os.makedirs(os.path.join(wd, 'sheets'), exist_ok=True)
         ev = [(q[1], q[9], q[2]) for q in (l.split(',', 9) for l in open(eng_ass, encoding='utf-8-sig') if l.startswith('Dialogue:'))]
 
-        ovr = os.path.join(here, 'overrides', slug + '.txt')
+        ovr = os.path.join(wd, 'overrides.txt')  # kept across runs, unlike the rest of the workdir
         args = [sys.executable, '-I', os.path.join(here, 'fixsigns.py'), eng_ass, fixed] + (['--ref', ref_ass] if ref else []) \
             + (['--cc', cc_ass] if cc else []) + (['--overrides', ovr] if os.path.exists(ovr) else [])
         # twice: first to find where signs get lengthened, then with the shot changes found only there
