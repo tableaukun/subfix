@@ -6,20 +6,21 @@
 #   the fixed track is named "<original> (signs fixed vN)"; a file whose fixed track is already at VERSION is
 #   skipped unless --force (e.g. after editing its overrides). Bump VERSION whenever the output would change,
 #   so every older file is redone on its next run or mpv open
-#   only touches non-English-audio releases with a subtitle track in the audio language, the timing reference
-#   (built and tested on Netflix anime; Korean, Spanish etc. should work but are untested): anything else, e.g.
-#   a Western film whose SDH has [DOOR CLOSES], is left alone
+#   only touches non-English-audio releases whose English subs are serialized (fixsigns.serialized): typeset subs
+#   (Crunchyroll, fansubs) and English-audio films, e.g. SDH with [DOOR CLOSES], are left alone. A subtitle track
+#   in the audio language, when there is one, is the dialogue timing reference (built and tested on Netflix anime;
+#   Korean, Spanish etc. should work but are untested)
 #   last line on success: "fixed-ass: <path>" (read by mpv/subfix.lua)
 import sys, os, re, json, stat, time, tempfile, subprocess
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fixsigns import t, issign, reading, ADJ
+from fixsigns import t, issign, serialized
 
 FRAMES, ROWS, LEAD = 16, 5, 2.0  # frames per sign strip, strips per sheet, seconds before the previous line
 STALE = 15 * 60  # a lock this old is from a killed run (a run takes ~1 min)
-VERSION = 4  # v1: plain "(signs fixed)", before the second review; v2: signs tracked the drawn text (dialogue
+VERSION = 5  # v1: plain "(signs fixed)", before the second review; v2: signs tracked the drawn text (dialogue
              # chains, shot changes, CC end); v3: signs last their reading time; v4: ...unless the shot changes
-             # first, and a repeated sign doesn't blink
+             # first, and a repeated sign doesn't blink; v5: ...or until the dialogue beside it ends
 
 def fixed_version(n):  # None: not one of ours; 1: unversioned "(signs fixed)"
     m = re.search(r'\(signs fixed(?: v(\d+))?\)$', n)
@@ -44,15 +45,14 @@ def pick(subs, lang, cc):
             return x
 
 def original_language(tracks):
-    # the audio's language when it isn't English and has a full subtitle track (timed to that speech): the reference.
-    # Default audio first (a dual-audio release with an English dub first still finds its original); commentary
-    # tracks never count, or --strip could delete the real original's subtitles
+    # the audio's language when it isn't English. Default audio first (a dual-audio release with an English dub
+    # first still finds its original); commentary tracks never count, or --strip could delete the real original's
+    # subtitles. One with a full subtitle track (timed to that speech, the reference) beats one without
     audio = [x for x in tracks if x['type'] == 'audio' and not re.search(r'comment', name(x), re.I)]
     subs = [x for x in tracks if x['type'] == 'subtitles']
-    for x in sorted(audio, key=lambda x: not x['properties'].get('default_track')):
-        lang = x['properties'].get('language')
-        if lang not in ('eng', 'und', None) and pick(subs, lang, False):
-            return lang
+    langs = [x['properties'].get('language') for x in sorted(audio, key=lambda x: not x['properties'].get('default_track'))]
+    langs = [l for l in langs if l not in ('eng', 'und', None)]
+    return next((l for l in langs if pick(subs, l, False)), langs[0] if langs else None)
 
 def plan_remux(tracks, strip=False, lang='jpn'):
     # fixed track (input 0) goes in just before the first English subtitle track (even a forced or SDH one), so it's
@@ -96,13 +96,6 @@ def lock(wd):
             if up is not False and time.time() - os.path.getmtime(path) < STALE:  # a reused pid stops counting too
                 return None
             os.remove(path)
-
-def stretches(ev):
-    # where a sign gets lengthened past its listed end to its reading time: only there can a shot change cut it.
-    # Under 0.2 s (5 frames) past a shot change isn't noticeable, so not worth a scan: each one decodes from the
-    # previous keyframe (~4 s back). Starts 1 s early so ffmpeg's scene score has frames to compare against
-    return [(t(e) - ADJ - 1, t(s) + reading(txt) + 0.05) for s, txt, e in ev
-            if issign(txt) and t(s) + reading(txt) >= t(e) + 0.2]
 
 def shot_changes(mkv, wins):
     def scan(w):
@@ -166,19 +159,39 @@ def main():
     # CC sound labels are parsed in the Japanese format （…） only; other languages just skip that step
     eng = pick(subs, 'eng', False)
     ref, cc = (pick(subs, lang, False), pick(subs, lang, True) if lang == 'jpn' else None) if lang else (None, None)
-    if not lang or not eng:
-        why = 'no full English subtitle track' if lang else 'not a non-English-audio release with original-language subs'
-        if not ours:
-            print(f'{why}: skipped, file untouched')
+    why = None if eng and lang else 'English-language audio' if eng else 'no full English subtitle track'
+    if why and not ours:
+        print(f'{why}: skipped, file untouched')
+        return
+    wd = os.path.join(root, slug)
+    os.makedirs(os.path.join(wd, 'sheets'), exist_ok=True)
+    held = lock(wd)
+    if not held:
+        print('another run is fixing this episode: skipped')
+        return
+    # a run that failed, or found nothing to fix, on this exact file isn't repeated on every open
+    failed, clean = os.path.join(wd, 'failed'), os.path.join(wd, 'clean')
+    st = os.stat(mkv)
+    stamp = f'{st.st_size} {st.st_mtime_ns} v{VERSION}'
+    seen = lambda f: not force and os.path.exists(f) and open(f).read().split('\n')[0] == stamp
+    try:
+        if seen(failed):
+            print(f'failed before on this exact file (see {failed}): skipped, use --force to retry')
             return
-        # an older version fixed a file this one wouldn't touch: take our track out, original English default again
-        wd = os.path.join(root, slug)
-        os.makedirs(wd, exist_ok=True)
-        held = lock(wd)
-        if not held:
-            print('another run is fixing this episode: skipped')
+        if seen(clean):
+            print(f'{open(clean).read().split(chr(10))[1]}: nothing to fix (checked before), file untouched')
             return
-        try:
+        eng_ass, ref_ass, cc_ass, fixed = (os.path.join(wd, n) for n in ('eng.ass', f'{lang}.ass', f'{lang}cc.ass', 'eng.fixed.ass'))
+        if not why:
+            mkvtool('mkvextract', mkv, 'tracks', *(f"{x['id']}:{p}" for x, p in ((eng, eng_ass), (ref, ref_ass), (cc, cc_ass)) if x))
+            if not serialized(eng_ass):
+                why = f"'{name(eng) or 'English'}' isn't streaming-style (no ALL-CAPS signs, or typeset ones)"
+        if why:
+            if not ours:
+                open(clean, 'w').write(f'{stamp}\n{why}\n')
+                print(f'{why}: nothing to fix, file untouched')
+                return
+            # an older version fixed a file this one wouldn't touch: take our track out, original English default again
             keep = [x['id'] for x in subs if not fixed_version(name(x))]
             dflt = [f"{eng['id']}:yes"] if eng else []
             _, problem = rewrite(mkv, lambda tmp: mkvtool('mkvmerge', '-q', '-o', tmp, '-s', ','.join(map(str, keep)),
@@ -186,37 +199,18 @@ def main():
                                  lambda new: len(new) == len(tracks) - len(ours)
                                              and not any(fixed_version(name(x)) for x in new))
             print(problem or f'{why}: removed the old fixed track, original English is the default again')
-        finally:
-            os.remove(held)
-        return
-
-    wd = os.path.join(root, slug)
-    os.makedirs(os.path.join(wd, 'sheets'), exist_ok=True)
-    held = lock(wd)
-    if not held:
-        print('another run is fixing this episode: skipped')
-        return
-    failed = os.path.join(wd, 'failed')  # a run that fails on this exact file won't be retried on every open
-    st = os.stat(mkv)
-    stamp = f'{st.st_size} {st.st_mtime_ns} v{VERSION}'
-    try:
-        if not force and os.path.exists(failed) and open(failed).read().split('\n')[0] == stamp:
-            print(f'failed before on this exact file (see {failed}): skipped, use --force to retry')
             return
-        eng_ass, ref_ass, cc_ass, fixed = (os.path.join(wd, n) for n in ('eng.ass', f'{lang}.ass', f'{lang}cc.ass', 'eng.fixed.ass'))
-        mkvtool('mkvextract', mkv, 'tracks', *(f"{x['id']}:{p}" for x, p in ((eng, eng_ass), (ref, ref_ass), (cc, cc_ass)) if x))
         ev = [(q[1], q[9], q[2]) for q in (l.split(',', 9) for l in open(eng_ass, encoding='utf-8-sig') if l.startswith('Dialogue:'))]
-        if not any(issign(txt) for _, txt, _ in ev):
-            # every fix hangs off an ALL-CAPS sign; none means the subs weren't serialized
-            print(f"no ALL-CAPS signs in '{name(eng) or 'English'}': nothing to fix, no output written")
-            return
 
-        cuts = os.path.join(wd, 'cuts.txt')
-        open(cuts, 'w').write(''.join(f'{c:.3f}\n' for c in shot_changes(mkv, stretches(ev))))
         ovr = os.path.join(here, 'overrides', slug + '.txt')
-        args = [eng_ass, fixed, '--ref', ref_ass, '--cuts', cuts] + (['--cc', cc_ass] if cc else []) \
-            + (['--overrides', ovr] if os.path.exists(ovr) else [])
-        print(run(sys.executable, '-I', os.path.join(here, 'fixsigns.py'), *args), end='')
+        args = [sys.executable, '-I', os.path.join(here, 'fixsigns.py'), eng_ass, fixed] + (['--ref', ref_ass] if ref else []) \
+            + (['--cc', cc_ass] if cc else []) + (['--overrides', ovr] if os.path.exists(ovr) else [])
+        # twice: first to find where signs get lengthened, then with the shot changes found only there
+        wins, cuts = os.path.join(wd, 'stretches.txt'), os.path.join(wd, 'cuts.txt')
+        run(*args, '--stretches', wins)
+        found = shot_changes(mkv, [tuple(map(float, l.split())) for l in open(wins) if l.strip()])
+        open(cuts, 'w').write(''.join(f'{c:.3f}\n' for c in found))
+        print(run(*args, '--cuts', cuts), end='')
 
         try:  # contact sheets are for checking by eye; never let them block the fix
             rows = sheets(mkv, wd, ev, cc_ass if cc else None)

@@ -3,11 +3,13 @@
 Fixes English subs in Netflix-sourced MKVs of non-English shows. Netflix never shows a sign (an on-screen-text
 translation, in ALL CAPS) and dialogue at the same time, so the two get delayed or cut short around each other.
 
-**Scope:** built for and tested on Netflix **anime** (Japanese audio). The same subtitle rule applies to every
-non-English Netflix show, so a Korean drama or a Spanish series gets the core fixes too, using its own
-original-language subtitle track as the timing reference, but that is untested. The CC sound-label step (below)
-reads the Japanese CC format only and is skipped for other languages. English-language shows have no sign
-translations and are left alone.
+**Scope:** built for and tested on Netflix **anime** (Japanese audio). It acts on what the English subs look
+like, not where they came from: ALL-CAPS signs that never share the screen with dialogue, and nothing positioned
+by hand. Typeset subs (Crunchyroll, fansubs: `\pos` signs over the dialogue) and subs without signs are left
+alone. The same rule applies to every non-English Netflix show, so a Korean drama or a Spanish series gets the
+fixes too, but that is untested. The original-language subtitle track, when there is one, restores dialogue
+timing; without it only the signs are fixed. The CC sound-label step (below) reads the Japanese CC format only.
+English-language shows have no sign translations and are left alone.
 
 ## Requirements
 
@@ -36,12 +38,12 @@ Get-ChildItem C:\path\to\season\*.mkv | % { python fixep.py $_.FullName }  # Win
 Each file takes about 5-15 s (the shot-change check on lengthened signs and the contact sheets; longer while mpv is playing it, as it runs at low
 priority). What it prints:
 
-- `updated: … (default English: … (signs fixed v4))`: fixed
-- `already fixed (v4): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
+- `updated: … (default English: … (signs fixed v5))`: fixed
+- `already fixed (v5): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
   overrides). A file fixed by an older version is redone automatically
-- `not a non-English-audio release with original-language subs: skipped`: only shows with non-English audio and
-  a subtitle track in that language (the timing reference) are touched, never e.g. an English-language film
-- `no ALL-CAPS signs …: nothing to fix`: subs aren't Netflix-style (e.g. typeset Crunchyroll subs); file untouched
+- `English-language audio: skipped`: never touched, e.g. an English film whose SDH has `[DOOR CLOSES]`
+- `… isn't streaming-style …: nothing to fix`: typeset subs (e.g. Crunchyroll) or no signs; file untouched.
+  Remembered, so later opens skip it at once until the file changes
 - `another run is fixing this episode: skipped`: e.g. two mpv windows on one file
 - `failed before on this exact file: skipped`: a run on this file failed (the error is in
   `work/<episode>/failed`); it isn't retried on every open until the file changes or you pass `--force`
@@ -60,11 +62,12 @@ is split: the path you run it on gets the fix and becomes a separate file.
 - signs get their own top-of-screen `Sign` style. Dialogue Netflix lifted to the top (to keep clear of drawn text)
   keeps the top line and the sign sits under it
 - signs last long enough to read, like dialogue: at least as long as Netflix listed them, 1.5 s minimum, about 17
-  characters a second. When that lengthens a sign, the added stretch is checked for a shot change: if the shot
+  characters a second. A sign beside a line of dialogue stays until that line ends, if that's within twice its
+  reading time. When that lengthens a sign, the added stretch is checked for a shot change: if the shot
   changes there, the drawn text has gone, so the sign ends at the change. The same sign repeated moments later
   (a heartbeat) is joined up instead of blinking
 - dialogue start/end times are restored from the original-language subtitle track, which is timed to the speech
-  (for anime, the first Japanese track that isn't CC/SDH)
+  (for anime, the first Japanese track that isn't CC/SDH). Releases without one keep Netflix's dialogue timing
 - sound-effect signs start with their sound in the Japanese CC track's sound labels, e.g. `（心臓の鼓動）` for
   BA-BUMP (Japanese only)
 

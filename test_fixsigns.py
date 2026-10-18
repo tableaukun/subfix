@@ -197,15 +197,17 @@ def test_fixed_track_versions():
     assert f.fixed_version('NF_English (signs fixed)') == 1  # tracks from before versioning
     assert f.fixed_version('NF_English') is None and f.fixed_version('Signs fixed by fansubber') is None
 
-def test_original_language_is_the_non_english_audio_with_matching_subs():
+def test_original_language_is_the_non_english_audio():
     f = fixep()
     assert f.original_language(NETFLIX) == 'jpn'
     western = [trk(0, 'video', 'und'), trk(1, 'audio', 'eng'), trk(2, 'subtitles', 'eng', 'English SDH'),
                trk(3, 'subtitles', 'fre', 'French')]
     crunchyroll = [trk(0, 'video', 'und'), trk(1, 'audio', 'jpn'), trk(2, 'subtitles', 'eng', 'English subs')]
     with_jpn_subs = western + [trk(4, 'subtitles', 'jpn', 'Japanese')]  # English audio: no sign translations
-    assert f.original_language(western) is None and f.original_language(crunchyroll) is None
-    assert f.original_language(with_jpn_subs) is None
+    assert f.original_language(western) is None and f.original_language(with_jpn_subs) is None
+    assert f.original_language(crunchyroll) == 'jpn'  # no reference subs: its English subs' shape decides
+    dual = [trk(0, 'video', 'und'), trk(1, 'audio', 'spa'), trk(2, 'audio', 'jpn')] + NETFLIX[3:]
+    assert f.original_language(dual) == 'jpn'  # one with reference subs beats one without
     kdrama = [trk(0, 'video', 'und'), trk(1, 'audio', 'kor'), trk(2, 'subtitles', 'eng', 'English'),
               trk(3, 'subtitles', 'kor', 'Korean'), trk(4, 'subtitles', 'spa', 'Spanish')]
     assert f.original_language(kdrama) == 'kor'
@@ -237,10 +239,31 @@ def test_commentary_audio_is_never_the_original_language():
     assert f.original_language(dflt) == 'jpn'  # the default audio wins over an earlier one
 
 def test_stretches_only_where_a_sign_is_lengthened():
-    f = fixep()
-    ev = [('0:00:10.00', 'EEK', '0:00:11.00'), ('0:00:20.00', 'EPISODE 17', '0:00:24.00'),
-          ('0:00:30.00', 'line', '0:00:31.00'), ('0:00:40.00', 'HUH?', '0:00:41.41')]  # HUH?: only 0.09 s added
-    assert [tuple(round(x, 2) for x in w) for w in f.stretches(ev)] == [(9.85, 11.55)]
+    with tempfile.TemporaryDirectory() as d:
+        src, wins = os.path.join(d, 'eng'), os.path.join(d, 'wins')
+        open(src, 'w').write(ass(('0:00:10.00', '0:00:11.00', 'EEK'), ('0:00:20.00', '0:00:24.00', 'EPISODE 17'),
+                                 ('0:00:30.00', '0:00:31.00', 'line'), ('0:00:40.00', '0:00:41.41', 'HUH?')))  # HUH?: +0.09 s
+        subprocess.run([sys.executable, '-I', os.path.join(HERE, 'fixsigns.py'), src, os.path.join(d, 'out'),
+                        '--stretches', wins], check=True, capture_output=True)
+        assert open(wins).read() == '9.850 11.550\n'
+
+def test_sign_stays_until_the_dialogue_beside_it_ends():
+    _, ev = fix(ass(('0:00:10.00', '0:00:11.00', 'FLIP'), ('0:00:11.00', '0:00:12.80', 'beside it'),
+                    ('0:00:20.00', '0:00:21.00', 'RUMBLE'), ('0:00:21.00', '0:00:25.00', 'a long line beside it')))
+    assert ev['FLIP'][1] == '0:00:12.80'  # within twice its reading time
+    assert ev['RUMBLE'][1] == '0:00:21.50'  # 4 s more is too long: just its reading time
+
+def test_only_serialized_subs_count():
+    sys.path.insert(0, HERE)
+    from fixsigns import serialized
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, 'x')
+        for body, want in ((ass(('0:00:01.00', '0:00:02.00', 'SIGN'), ('0:00:02.00', '0:00:04.00', 'talk')), True),
+                           (ass(('0:00:01.00', '0:00:03.00', 'SIGN'), ('0:00:02.00', '0:00:04.00', 'talk')), False),
+                           (ass(('0:00:01.00', '0:00:02.00', '{\\pos(640,80)}SIGN'), ('0:00:03.00', '0:00:04.00', 'x')), False),
+                           (ass(('0:00:01.00', '0:00:02.00', 'only dialogue')), False)):
+            open(p, 'w').write(body)
+            assert serialized(p) is want, body
 
 def test_lock_is_exclusive_and_taken_over_from_a_dead_run():
     f = fixep()

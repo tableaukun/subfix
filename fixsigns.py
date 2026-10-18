@@ -8,9 +8,13 @@
 # Signs last long enough to read, like dialogue, not for as long as the drawn text is on screen: at least as listed,
 # READ_MIN at minimum, READ_CPS characters a second. (Tracking the drawn text needed a dialogue-chain heuristic and a
 # shot-change scan; reading time differed by under 0.5 s past a shot change for 5 of 38 signs.)
-#   --cuts shot-change times found in the stretch a sign is lengthened past its listed end (fixep.py scans only
-#          there): the drawn text has left, so the sign ends at the change instead, never before its listed end
-# usage: fixsigns.py in.ass out.ass [--ref R] [--cc C] [--cuts S] [--overrides O]
+# A sign beside a line of dialogue stays until that line ends, when that's within twice its reading time.
+#   --stretches  writes "from to" for each sign lengthened past its listed end: fixep.py scans only those for shot
+#                changes, then runs this again with
+#   --cuts shot-change times found in those stretches: the drawn text has left, so the sign ends at the change
+#          instead, never before its listed end
+# Only serialized subs are touched (serialized()): typeset ones, e.g. Crunchyroll's, have \pos signs over dialogue.
+# usage: fixsigns.py in.ass out.ass [--ref R] [--cc C] [--stretches W | --cuts S] [--overrides O]
 import argparse, re
 READ_MIN, READ_CPS = 1.5, 17  # Netflix-style reading speed; signs sit at the top, so a little slower than 20 cps
 CAP = 5.0  # a CC sound label may start up to this long before its (held-back) sign
@@ -28,11 +32,20 @@ def issign(txt):  # ALL-CAPS Latin text; kana/kanji have no case so never count
 def cues(path):
     return [(t(q[1]), t(q[2]), q[9]) for q in (l.rstrip('\n').split(',', 9) for l in open(path, encoding='utf-8-sig')
                                                if l.startswith('Dialogue:'))]
+def serialized(path):
+    # streaming-style: ALL-CAPS signs that never share the screen with dialogue, and nothing positioned by hand.
+    # Typeset subs (Crunchyroll, fansubs) put \pos signs over the dialogue; plain subs without caps have no signs
+    if re.search(r'\\(pos|move)\(', open(path, encoding='utf-8-sig').read()):
+        return False
+    ev = cues(path)
+    signs, dlg = [e for e in ev if issign(e[2])], [e for e in ev if not issign(e[2])]
+    return bool(signs) and not any(s[0] < d[1] - SNAP and d[0] < s[1] - SNAP for s in signs for d in dlg)
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('src'); ap.add_argument('dst')
-    ap.add_argument('--ref', '--jpn', dest='ref'); ap.add_argument('--cc'); ap.add_argument('--cuts'); ap.add_argument('--overrides')
+    ap.add_argument('--ref', '--jpn', dest='ref'); ap.add_argument('--cc'); ap.add_argument('--overrides')
+    ap.add_argument('--cuts'); ap.add_argument('--stretches')
     a = ap.parse_args()
     lines = open(a.src, encoding='utf-8-sig').read().splitlines()
     has_sign_style = any(l.startswith('Style: Sign,') for l in lines)
@@ -122,13 +135,21 @@ def main():
                 e[0] = new
 
     cuts = [float(x) for x in open(a.cuts) if x.strip()] if a.cuts else []
+    wins = []
     for e in ev:
         if e[2]:  # long enough to read (from its possibly earlier start), never shorter than listed
-            listed_end = t(e[3][2])
-            e[1] = max(e[1], e[0] + reading(e[3][9]))
+            listed_end, r = t(e[3][2]), reading(e[3][9])
+            e[1] = max(e[1], e[0] + r)
+            # beside a line of dialogue: until that line ends, so neither leaves the other on screen alone briefly
+            beside = [d[1] for d in ev if not d[2] and d[0] < e[1] and e[0] < d[1] <= e[0] + 2 * r]
+            e[1] = max([e[1]] + beside)
+            if e[1] >= listed_end + 0.2:  # under 0.2 s (5 frames) past a shot change isn't noticeable
+                wins.append(f'{listed_end - ADJ - 1:.3f} {e[1] + 0.05:.3f}\n')  # 1 s early: frames to compare
             c = [x for x in cuts if max(e[0], listed_end - ADJ) < x < e[1]]  # shot changed in the added stretch
             if c:
                 e[1] = max(listed_end, min(c))
+    if a.stretches:
+        open(a.stretches, 'w').write(''.join(wins))
 
     signs = sorted((e for e in ev if e[2]), key=lambda e: e[0])
     for x, y in zip(signs, signs[1:]):  # the same sign again moments later (a heartbeat): one sign, no blink
