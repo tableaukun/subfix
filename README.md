@@ -15,7 +15,7 @@ sudo apt install python3 ffmpeg mkvtoolnix    # Debian/Ubuntu
 
 ## Usage
 
-One file:
+From the `subfix` folder (or give the full path to `fixep.py`). One file:
 
 ```
 python3 fixep.py "/path/to/episode.mkv"
