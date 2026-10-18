@@ -41,21 +41,36 @@ args = [eng_ass, fixed, '--cuts', cuts] + (['--jpn', jpn_ass] if jpn else []) + 
     + (['--overrides', ovr] if os.path.exists(ovr) else [])
 print(run(sys.executable, '-I', os.path.join(here, 'fixsigns.py'), *args), end='')
 
-# contact sheets: each row = one sign that directly follows another line (so it may have been held back),
-# FRAMES evenly spaced from LEAD s before that line's start to just after the sign's listed start
+# contact sheets, one row per sign to check by eye, FRAMES evenly spaced:
+# - held back?  sign directly follows another line: from LEAD s before that line to just after the sign's start
+# - shout?      a CC line with a speaker label, e.g. （ミナト）え？, and no sound label starts with it, so the caps
+#               line may be a translated shout rather than drawn text: frames across the sign itself.
+#               (overlap alone flagged 12/38 signs here, all drawn; same start flags 1)
 ev = [(q[1], re.sub(r'\{[^}]*\}', '', q[9]).replace('\\N', ' ').strip(), q[2])
       for q in (l.split(',', 9) for l in open(eng_ass, encoding='utf-8-sig') if l.startswith('Dialogue:'))]
 sign = lambda s: (lambda L: len(L) >= 2 and all(c.isupper() for c in L))([c for c in s if c.isalpha()])  # as fixsigns.issign
-cand = [(p[0], c[0], c[1]) for p, c in zip(ev, ev[1:]) if sign(c[1]) and t(c[0]) - t(p[2]) < 0.15]
+rows = [(max(0, t(p[0]) - LEAD), t(c[0]) + 0.2, c[0], c[1], 'held back?')
+        for p, c in zip(ev, ev[1:]) if sign(c[1]) and t(c[0]) - t(p[2]) < 0.15]
+if jcc:
+    def spoken(txt):  # a speaker label, （name） followed by dialogue, and no sound label （…） on a line of its own
+        parts = [p.strip().lstrip('-').strip() for p in re.sub(r'\{[^}]*\}', '', txt).split('\\N')]
+        label = [re.fullmatch(r'（[^）]*）', p) and (n + 1 == len(parts) or parts[n+1].startswith('（'))
+                 for n, p in enumerate(parts)]
+        return not any(label) and any(re.match(r'（[^）]*）\S', p) or (re.fullmatch(r'（[^）]*）', p) and not label[n])
+                                      for n, p in enumerate(parts))
+    talk = [(t(q[1]), t(q[2])) for q in (l.split(',', 9) for l in open(cc_ass, encoding='utf-8-sig')
+                                         if l.startswith('Dialogue:')) if spoken(q[9])]
+    rows += [(max(0, t(ss) - 0.5), t(se) + 0.3, ss, txt, 'shout?') for ss, txt, se in ev
+             if sign(txt) and any(abs(s - t(ss)) <= 0.1 for s, _ in talk)]
+for f in os.listdir(os.path.join(wd, 'sheets')): os.remove(os.path.join(wd, 'sheets', f))
 index, strips = [], []
-for n, (ds, ss, txt) in enumerate(cand):
-    a, b = max(0, t(ds) - LEAD), t(ss) + 0.2
+for n, (a, b, ss, txt, why) in enumerate(rows):
     step = (b - a) / (FRAMES - 1)
     strip = os.path.join(wd, 'sheets', f'strip{n:03d}.png')
     run('ffmpeg', '-v', 'error', '-ss', f'{a:.3f}', '-t', f'{b - a + step:.3f}', '-i', mkv, '-an', '-sn',
         '-vf', f'fps=1/{step:.4f},scale=240:-2,tile={FRAMES}x1', '-frames:v', '1', '-y', strip)
     strips.append(strip)
-    index.append(f"sheet{n // ROWS + 1:02d} row{n % ROWS + 1}  sign {ss}  frames {a:.2f}+k*{step:.3f}s  {txt[:40]}")
+    index.append(f"sheet{n // ROWS + 1:02d} row{n % ROWS + 1}  {why:10}  sign {ss}  frames {a:.2f}+k*{step:.3f}s  {txt[:40]}")
 for g in range(0, len(strips), ROWS):
     grp = strips[g:g + ROWS]
     out = os.path.join(wd, 'sheets', f'sheet{g // ROWS + 1:02d}.png')
@@ -68,5 +83,5 @@ out = os.path.join(os.path.dirname(mkv), re.sub(r'\[[0-9A-F]{8}\]$', '', stem) +
 if os.path.exists(out): os.remove(out)
 run('mkvmerge', '-q', '-o', out, '--track-order', f'1:0,1:1,0:0', '--language', '0:eng',
     '--track-name', f"0:{eng['properties'].get('track_name') or 'English'} (signs fixed)", '--default-track-flag', '0:yes', fixed, '-s', f"!{eng['id']}", mkv)
-print(f"workdir: {wd}\nsheets:  {len(cand)} signs in {(len(cand) + ROWS - 1) // ROWS} sheets ({os.path.join(wd, 'sheets')})\n"
+print(f"workdir: {wd}\nsheets:  {len(rows)} rows in {(len(rows) + ROWS - 1) // ROWS} sheets ({os.path.join(wd, 'sheets')})\n"
       f"overrides: {ovr if os.path.exists(ovr) else 'none yet'}\noutput:  {out}")

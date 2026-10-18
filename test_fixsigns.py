@@ -134,6 +134,13 @@ def test_sign_never_runs_past_shot_change_after_listed_end():
     assert ev['WHOA?!'][:2] == ('0:00:10.00', '0:00:11.49')
     assert ev['HELD BACK'][:2] == ('0:00:17.50', '0:00:22.00')  # cut before its listed start doesn't count
 
+def test_sign_stays_top_when_bottom_dialogue_also_overlaps():
+    # BA-BUMP 18:22: overlapped top dialogue once and bottom dialogue three times; moving it made it jump
+    _, ev = fix(ass(('0:02:00.00', '0:02:06.00', 'BA-BUMP'),
+                    ('0:02:00.50', '0:02:02.00', 'bottom line'),
+                    ('0:02:03.00', '0:02:05.00', '{\\an8}top line')))
+    assert 'BA-BUMP' in ev
+
 if __name__ == '__main__':
     tests = [f for n, f in sorted(globals().items()) if n.startswith('test_')]
     for f in tests:
