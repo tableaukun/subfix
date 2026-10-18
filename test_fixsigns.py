@@ -216,6 +216,12 @@ def test_remux_plan_keeps_all_subs_unless_strip_and_replaces_an_earlier_fixed_tr
     keep, order, want = f.plan_remux(again, NETFLIX[3])
     assert 9 not in keep and order.count('0:0') == 1 and want == 9
 
+def test_shot_change_windows_cover_each_sign_and_merge():
+    f = fixep()
+    ev = [('0:00:10.00', 'BA-BUMP', '0:00:11.00'), ('0:00:12.00', 'dialogue', '0:00:14.00'),
+          ('0:00:16.00', 'EEK', '0:00:16.50'), ('0:01:00.00', 'URGH', '0:01:08.00'), ('0:00:00.50', 'GO', '0:00:01.00')]
+    assert f.windows(ev) == [[0, 26.0], [59.0, 73.0]]  # GO, BA-BUMP, EEK chain into one; URGH ends past start+5 s
+
 def test_lock_is_exclusive_and_taken_over_from_a_dead_run():
     f = fixep()
     with tempfile.TemporaryDirectory() as d:

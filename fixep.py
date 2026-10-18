@@ -11,6 +11,7 @@
 #   a Western film whose SDH has [DOOR CLOSES], is left alone
 #   last line on success: "fixed-ass: <path>" (read by mpv/subfix.lua)
 import sys, os, re, json, time, tempfile, subprocess
+from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fixsigns import t, issign
 
@@ -89,7 +90,33 @@ def lock(wd):
                 return None
             os.remove(path)
 
+def windows(ev):
+    # only where the cuts rule looks: from 1 s before each sign (a cut right at it) to 5 s past the furthest it can
+    # run (listed end, or listed start + CAP when extended); overlapping windows merged.
+    # Decoding the whole episode took 38 of a run's 42 s
+    wins = []
+    for s, txt, e in sorted(ev, key=lambda x: t(x[0])):
+        if not issign(txt): continue
+        a, b = max(0, t(s) - 1), max(t(e), t(s) + 5) + 5
+        if wins and a <= wins[-1][1]:
+            wins[-1][1] = max(wins[-1][1], b)
+        else:
+            wins.append([a, b])
+    return wins
+
+def shot_changes(mkv, ev):
+    def scan(w):
+        a, b = w
+        log = subprocess.run(['ffmpeg', '-nostdin', '-ss', f'{a:.3f}', '-t', f'{b - a:.3f}', '-i', mkv, '-an', '-sn',
+                              '-vf', "scale=320:-2,select='gt(scene,0.25)',showinfo", '-f', 'null', '-'],
+                             check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL).stderr
+        return [a + float(x) for x in re.findall(r'pts_time:([0-9.]+)', log)]  # pts restart at 0 after -ss
+    with ThreadPoolExecutor(max(1, (os.cpu_count() or 2) // 2)) as pool:
+        return sorted(c for found in pool.map(scan, windows(ev)) for c in found)
+
 def main():
+    if hasattr(os, 'nice'):
+        os.nice(10)  # mpv may be playing this very file: let playback have the CPU first (children inherit it)
     here = os.path.dirname(os.path.abspath(__file__))
     force, strip = '--force' in sys.argv, '--strip' in sys.argv
     argv = [x for x in sys.argv[1:] if x not in ('--force', '--strip')]
@@ -137,12 +164,9 @@ def main():
             print(f"no ALL-CAPS signs in '{name(eng) or 'English'}': nothing to fix, no output written")
             return
 
-        cuts = os.path.join(wd, 'cuts.txt')  # shot changes, cached: a full decode takes ~30s
+        cuts = os.path.join(wd, 'cuts.txt')  # cached
         if not os.path.exists(cuts):
-            log = subprocess.run(['ffmpeg', '-nostdin', '-i', mkv, '-an', '-sn', '-vf',
-                                  "scale=320:-2,select='gt(scene,0.25)',showinfo", '-f', 'null', '-'],
-                                 check=True, capture_output=True, text=True).stderr
-            open(cuts, 'w').write(''.join(x + '\n' for x in re.findall(r'pts_time:([0-9.]+)', log)))
+            open(cuts, 'w').write(''.join(f'{c:.3f}\n' for c in shot_changes(mkv, ev)))
 
         ovr = os.path.join(here, 'overrides', slug + '.txt')
         args = [eng_ass, fixed, '--cuts', cuts, '--ref', ref_ass] + (['--cc', cc_ass] if cc else []) \

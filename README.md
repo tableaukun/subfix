@@ -33,7 +33,8 @@ for f in /path/to/season/*.mkv; do python3 fixep.py "$f"; done             # mac
 Get-ChildItem C:\path\to\season\*.mkv | % { python fixep.py $_.FullName }  # Windows PowerShell
 ```
 
-Each file takes about 40 s (most of it shot-change detection). What it prints:
+Each file takes roughly 5-20 s (shot-change detection around each sign; longer while mpv is playing it, as it
+runs at low priority). What it prints:
 
 - `updated: … (default English: … (signs fixed v2))`: fixed
 - `already fixed (v2): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
@@ -80,7 +81,7 @@ then rerun with `--force`. Without overrides, everything else is still fixed.
 ## mpv
 
 `mpv/subfix.lua` runs `fixep.py` in the background whenever an MKV opens, then loads and selects the fixed English
-subs (about 40 s in). Files already fixed by the current version are skipped in a fraction of a second, so files
+subs (usually 5-20 s in). Files already fixed by the current version are skipped in a fraction of a second, so files
 fixed beforehand start straight away; files fixed by an older version are redone. macOS: Homebrew is found even
 when mpv starts from Finder. Add `strip=yes` to `script-opts/subfix.conf` for the `--strip` behaviour.
 
