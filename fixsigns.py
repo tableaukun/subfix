@@ -28,6 +28,7 @@ def cues(path):
 lines = open(a.src, encoding='utf-8-sig').read().splitlines()
 has_sign_style = any(l.startswith('Style: Sign,') for l in lines)
 head, ev = [], []  # ev: [start, end, is_sign, fields, fixed_by_cc]
+dlg_size = dlg_mv = None  # first non-Sign style: dialogue font size and vertical margin
 for l in lines:
     if l.startswith('Dialogue:'):
         p = l.split(',', 9)
@@ -36,13 +37,13 @@ for l in lines:
         sign = issign(txt)
         if sign:
             p[3] = 'Sign'
-        # fixed layout: signs on top (Sign style), dialogue always at the bottom. Netflix lifts dialogue to the top
-        # (\an8) over drawn text, which would now stack with the signs up there
-        txt = re.sub(r'\\an\d', '', txt).replace('{}', '')
+            txt = re.sub(r'\\an\d', '', txt).replace('{}', '')
         p[9] = txt
         ev.append([t(p[1]), t(p[2]), sign, p, False])
     else:
         head.append(l)
+        if l.startswith('Style:') and not l.startswith('Style: Sign,') and dlg_size is None:
+            dlg_size, dlg_mv = float(l.split(',')[2]), int(l.split(',')[21])
         if l.startswith('Style:') and not has_sign_style:
             f = l.split(',')  # base Sign on the first style, whatever it is called: 85% size, top-center
             f[0], f[2], f[18] = 'Style: Sign', str(round(float(f[2]) * 0.85)), '8'
@@ -131,6 +132,13 @@ if a.cuts:
 signs = sorted((e for e in ev if e[2]), key=lambda e: e[0])
 for x, y in zip(signs, signs[1:]):
     if y[0] > x[0]: x[1] = min(x[1], y[0])  # don't stack two signs
+for s in signs:
+    # dialogue lifted to the top (\an8, so it doesn't cover drawn text at the bottom) gets the top line; the sign
+    # sits one dialogue-height lower for its whole run, so neither moves while on screen
+    top = [e for e in ev if not e[2] and '\\an8' in e[3][9] and e[0] < s[1] and s[0] < e[1]]
+    if top and dlg_size:
+        n = max(e[3][9].count('\\N') + 1 for e in top)
+        s[3][7] = str(dlg_mv + round(n * dlg_size * 1.15))  # ponytail: assumes lines don't auto-wrap
 ev.sort(key=lambda e: e[0])
 for e in ev:
     e[3][1], e[3][2] = ts(e[0]), ts(e[1])
