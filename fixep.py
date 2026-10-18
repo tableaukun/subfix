@@ -87,16 +87,18 @@ open(os.path.join(wd, 'sheets', 'index.txt'), 'w').write('\n'.join(index) + '\n'
 
 # remux in place: fixed track goes in just before the original English one and becomes the default English;
 # the original stays (not default). A "(signs fixed)" track from an earlier run is dropped and rebuilt.
+# Only English and Japanese subtitle tracks are kept; video, audio, fonts and chapters are untouched.
 old = [x['id'] for x in subs if (x['properties'].get('track_name') or '').endswith('(signs fixed)')]
-order = [f"1:{x['id']}" for x in tracks if x['id'] not in old]
+keep = [x['id'] for x in subs if x['id'] not in old and x['properties'].get('language') in ('eng', 'jpn')]
+order = [f"1:{x['id']}" for x in tracks if x['type'] != 'subtitles' or x['id'] in keep]
 order.insert(order.index(f"1:{eng['id']}"), '0:0')
 tmp = mkv + '.subfix-tmp.mkv'
 run('mkvmerge', '-q', '-o', tmp, '--track-order', ','.join(order), '--language', '0:eng',
     '--track-name', f"0:{eng['properties'].get('track_name') or 'English'} (signs fixed)", '--default-track-flag', '0:yes',
-    fixed, '--default-track-flag', f"{eng['id']}:no", *(['-s', '!' + ','.join(map(str, old))] if old else []), mkv)
+    fixed, '--default-track-flag', f"{eng['id']}:no", '-s', ','.join(map(str, keep)), mkv)
 new = json.loads(run('mkvmerge', '-J', tmp))['tracks']
 first_eng = next(x for x in new if x['type'] == 'subtitles' and x['properties'].get('language') == 'eng')
-if len(new) != len(tracks) - len(old) + 1 or not first_eng['properties'].get('track_name', '').endswith('(signs fixed)'):
+if len(new) != len(tracks) - len(subs) + len(keep) + 1 or not first_eng['properties'].get('track_name', '').endswith('(signs fixed)'):
     os.remove(tmp)
     sys.exit('remux check failed, original left untouched')
 os.replace(tmp, mkv)  # same directory, so the swap is atomic

@@ -10,7 +10,7 @@ python3 fixep.py "/path/to/episode.mkv"
 
 Adds the fixed subs to the same file as the default English track, just before the original English track
 (kept, no longer default). Rerunning replaces the earlier fixed track. The file is rewritten to a temp copy, checked,
-then swapped in. Subs without ALL-CAPS signs (e.g. typeset Crunchyroll subs) are left alone. It:
+then swapped in. Only English and Japanese subtitle tracks are kept. Subs without ALL-CAPS signs (e.g. typeset Crunchyroll subs) are left alone. It:
 
 - moves signs to their own top-of-screen `Sign` style; dialogue Netflix lifted to the top (to keep clear of drawn
   text) keeps the top line and the sign sits under it
