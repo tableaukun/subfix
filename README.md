@@ -8,7 +8,9 @@ Netflix-style subs never show a sign and dialogue at the same time, so on-screen
 python3 fixep.py "/path/to/episode.mkv"
 ```
 
-Writes `<name>[fixed-eng].mkv` next to the input (the original is left alone). It:
+Adds the fixed subs to the same file as the default English track, just before the original English track
+(kept, no longer default). Rerunning replaces the earlier fixed track. The file is rewritten to a temp copy, checked,
+then swapped in. Subs without ALL-CAPS signs (e.g. typeset Crunchyroll subs) are left alone. It:
 
 - moves signs to their own top-of-screen `Sign` style; dialogue Netflix lifted to the top (to keep clear of drawn
   text) keeps the top line and the sign sits under it

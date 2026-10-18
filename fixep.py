@@ -1,5 +1,6 @@
 # One-shot driver: extract English + Japanese subs from a streaming-sourced MKV, run fixsigns.py, write contact sheets
-# for signs that may have been held back behind dialogue, and remux to "<name>[fixed-eng].mkv" beside the input.
+# for signs that may have been held back behind dialogue, and remux the fixed track into the same file as the
+# default English (original English kept, not default).
 # Sign start overrides (picked from the sheets) go in overrides/<slug>.txt; rerun to apply them.
 # usage: fixep.py episode.mkv [workroot]   (default: ./work next to this script)
 import sys, os, re, json, subprocess
@@ -84,9 +85,20 @@ for g in range(0, len(strips), ROWS):
 for s in strips: os.remove(s)
 open(os.path.join(wd, 'sheets', 'index.txt'), 'w').write('\n'.join(index) + '\n')
 
-out = os.path.join(os.path.dirname(mkv), re.sub(r'\[[0-9A-F]{8}\]$', '', stem) + '[fixed-eng].mkv')
-if os.path.exists(out): os.remove(out)
-run('mkvmerge', '-q', '-o', out, '--track-order', f'1:0,1:1,0:0', '--language', '0:eng',
-    '--track-name', f"0:{eng['properties'].get('track_name') or 'English'} (signs fixed)", '--default-track-flag', '0:yes', fixed, '-s', f"!{eng['id']}", mkv)
+# remux in place: fixed track goes in just before the original English one and becomes the default English;
+# the original stays (not default). A "(signs fixed)" track from an earlier run is dropped and rebuilt.
+old = [x['id'] for x in subs if (x['properties'].get('track_name') or '').endswith('(signs fixed)')]
+order = [f"1:{x['id']}" for x in tracks if x['id'] not in old]
+order.insert(order.index(f"1:{eng['id']}"), '0:0')
+tmp = mkv + '.subfix-tmp.mkv'
+run('mkvmerge', '-q', '-o', tmp, '--track-order', ','.join(order), '--language', '0:eng',
+    '--track-name', f"0:{eng['properties'].get('track_name') or 'English'} (signs fixed)", '--default-track-flag', '0:yes',
+    fixed, '--default-track-flag', f"{eng['id']}:no", *(['-s', '!' + ','.join(map(str, old))] if old else []), mkv)
+new = json.loads(run('mkvmerge', '-J', tmp))['tracks']
+first_eng = next(x for x in new if x['type'] == 'subtitles' and x['properties'].get('language') == 'eng')
+if len(new) != len(tracks) - len(old) + 1 or not first_eng['properties'].get('track_name', '').endswith('(signs fixed)'):
+    os.remove(tmp)
+    sys.exit('remux check failed, original left untouched')
+os.replace(tmp, mkv)  # same directory, so the swap is atomic
 print(f"workdir: {wd}\nsheets:  {len(rows)} rows in {(len(rows) + ROWS - 1) // ROWS} sheets ({os.path.join(wd, 'sheets')})\n"
-      f"overrides: {ovr if os.path.exists(ovr) else 'none yet'}\noutput:  {out}")
+      f"overrides: {ovr if os.path.exists(ovr) else 'none yet'}\nupdated: {mkv} (default English: {first_eng['properties']['track_name']})")
