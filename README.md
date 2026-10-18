@@ -34,3 +34,14 @@ so their real start is picked by eye from the sheets into `overrides/<episode>.t
 then rerun `fixep.py`. Requires `mkvtoolnix` and `ffmpeg`.
 
 Tests: `python3 test_fixsigns.py` (stdlib only, made-up scripts, one case per rule).
+
+## mpv
+
+`mpv/subfix.lua` runs `fixep.py` in the background whenever an MKV opens, then loads and selects the fixed English
+subs (about 40 s in). Files that already have a "(signs fixed)" track are skipped. Install:
+
+```
+ln -s ~/Documents/projects/subfix/mpv/subfix.lua ~/.config/mpv/scripts/
+```
+
+To redo a file after editing its overrides: `python3 fixep.py --force "/path/to/episode.mkv"`.

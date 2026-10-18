@@ -2,11 +2,15 @@
 # for signs that may have been held back behind dialogue, and remux the fixed track into the same file as the
 # default English (original English kept, not default).
 # Sign start overrides (picked from the sheets) go in overrides/<slug>.txt; rerun to apply them.
-# usage: fixep.py episode.mkv [workroot]   (default: ./work next to this script)
+# usage: fixep.py episode.mkv [workroot] [--force]   (default workroot: ./work next to this script)
+#   skips a file that already has a "(signs fixed)" track unless --force (e.g. after editing its overrides)
+#   last line on success: "fixed-ass: <path>" (read by mpv/subfix.lua)
 import sys, os, re, json, subprocess
 here = os.path.dirname(os.path.abspath(__file__))
-mkv = sys.argv[1]
-root = sys.argv[2] if len(sys.argv) > 2 else os.path.join(here, 'work')
+force = '--force' in sys.argv
+argv = [x for x in sys.argv[1:] if x != '--force']
+mkv = argv[0]
+root = argv[1] if len(argv) > 1 else os.path.join(here, 'work')
 stem = os.path.splitext(os.path.basename(mkv))[0]
 slug = re.sub(r'[^\w.-]+', '_', re.sub(r'\[[0-9A-F]{8}\]$', '', stem)).strip('_')
 wd = os.path.join(root, slug)
@@ -26,6 +30,9 @@ def pick(lang, cc):
         hi = bool(pr.get('flag_hearing_impaired') or 'cc' in name or 'sdh' in name)
         if pr.get('language') == lang and hi == cc and (cc or not (pr.get('forced_track') or 'forced' in name or 'sign' in name)):
             return x
+if not force and any((x['properties'].get('track_name') or '').endswith('(signs fixed)') for x in subs):
+    print('already has a "(signs fixed)" track: skipped (use --force to redo)')
+    sys.exit(0)
 eng, jpn, jcc = pick('eng', False), pick('jpn', False), pick('jpn', True)
 if not eng: sys.exit('no full English subtitle track found')
 eng_ass, jpn_ass, cc_ass, fixed = (os.path.join(wd, n) for n in ('eng.ass', 'jpn.ass', 'jpncc.ass', 'eng.fixed.ass'))
@@ -101,6 +108,10 @@ first_eng = next(x for x in new if x['type'] == 'subtitles' and x['properties'].
 if len(new) != len(tracks) - len(subs) + len(keep) + 1 or not first_eng['properties'].get('track_name', '').endswith('(signs fixed)'):
     os.remove(tmp)
     sys.exit('remux check failed, original left untouched')
+if not os.path.exists(mkv):  # moved or deleted meanwhile (e.g. mpv's move-after-play): don't recreate it here
+    os.remove(tmp)
+    sys.exit('original moved or deleted during the fix: left alone')
 os.replace(tmp, mkv)  # same directory, so the swap is atomic
 print(f"workdir: {wd}\nsheets:  {len(rows)} rows in {(len(rows) + ROWS - 1) // ROWS} sheets ({os.path.join(wd, 'sheets')})\n"
-      f"overrides: {ovr if os.path.exists(ovr) else 'none yet'}\nupdated: {mkv} (default English: {first_eng['properties']['track_name']})")
+      f"overrides: {ovr if os.path.exists(ovr) else 'none yet'}\nupdated: {mkv} (default English: {first_eng['properties']['track_name']})\n"
+      f"fixed-ass: {fixed}")
