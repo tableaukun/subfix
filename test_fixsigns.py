@@ -17,12 +17,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 def ass(*events):
     return HEAD + ''.join(f"Dialogue: 0,{s},{e},Main,,0,0,0,,{txt}\n" for s, e, txt in events)
 
-def fix(eng, jpn=None, overrides=None, cc=None, cuts=None, raw=False):
+def fix(eng, jpn=None, overrides=None, cc=None, raw=False):
     with tempfile.TemporaryDirectory() as d:
         src, out = os.path.join(d, 'eng'), os.path.join(d, 'out')
         open(src, 'w', encoding='utf-8').write(eng)
         args = [src, out]
-        for flag, body in (('--ref', jpn), ('--overrides', overrides), ('--cc', cc), ('--cuts', cuts)):
+        for flag, body in (('--ref', jpn), ('--overrides', overrides), ('--cc', cc)):
             if body is not None:
                 path = os.path.join(d, flag[2:])
                 open(path, 'w', encoding='utf-8').write(body)
@@ -45,14 +45,14 @@ def test_sign_style_and_detection():
     assert ev['I…'][2] == 'Main'  # one letter is not a sign
     assert ev['ドキッ'][2] == 'Main'  # kana has no case
 
-def test_sign_extends_over_following_dialogue_until_next_sign():
-    _, ev = fix(ass(('0:00:01.00', '0:00:02.00', 'SIGN ONE'),
-                    ('0:00:02.08', '0:00:03.00', 'line a'),
-                    ('0:00:03.08', '0:00:04.00', 'line b'),
-                    ('0:00:04.08', '0:00:05.00', 'SIGN TWO'),
-                    ('0:00:05.08', '0:00:20.00', 'long line')))
-    assert ev['SIGN ONE'][:2] == ('0:00:01.00', '0:00:04.00')
-    assert ev['SIGN TWO'][1] == '0:00:05.00'  # 5s cap: long line not absorbed
+def test_signs_last_their_reading_time():
+    _, ev = fix(ass(('0:00:10.00', '0:00:11.00', 'EEK'),
+                    ('0:00:11.08', '0:00:20.00', 'a long line of dialogue right after it'),
+                    ('0:00:30.00', '0:00:31.00', 'MOMOKA KURIKI\\NVOICE CALL - VIDEO CALL - CHAT'),
+                    ('0:00:40.00', '0:00:44.00', 'EPISODE 17\\NTRUE FEELINGS')))
+    assert ev['EEK'][:2] == ('0:00:10.00', '0:00:11.50')  # 1.5 s minimum, not stretched over the dialogue
+    assert ev['MOMOKA KURIKI\\NVOICE CALL - VIDEO CALL - CHAT'][1] == '0:00:32.59'  # 44 characters at 17 cps
+    assert ev['EPISODE 17\\NTRUE FEELINGS'][:2] == ('0:00:40.00', '0:00:44.00')  # never shorter than listed
 
 def test_delayed_dialogue_snaps_to_japanese_start():
     _, ev = fix(ass(('0:00:10.00', '0:00:11.00', 'IRRITATED'),
@@ -84,9 +84,9 @@ def test_override_moves_sign_and_caps_previous_sign():
     _, ev = fix(ass(('0:00:40.00', '0:00:41.00', 'HIDE - TELL'),
                     ('0:00:41.08', '0:00:43.00', 'dialogue'),
                     ('0:00:43.08', '0:00:44.00', 'HIDE MY FEELINGS')),
-                overrides='# comment\n0:00:43.08 0:00:42.00\n')
-    assert ev['HIDE MY FEELINGS'][0] == '0:00:42.00'
-    assert ev['HIDE - TELL'][1] == '0:00:42.00'  # no two signs stacked at the top
+                overrides='# comment\n0:00:43.08 0:00:41.20\n')
+    assert ev['HIDE MY FEELINGS'][0] == '0:00:41.20'
+    assert ev['HIDE - TELL'][1] == '0:00:41.20'  # its reading time ran to 41.50; no two signs stacked at the top
 
 def test_truncated_dialogue_paired_by_overlap_not_start():
     # English starts 0.6s before the Japanese line (the 14:23 case)
@@ -113,14 +113,14 @@ def test_cc_sound_label_times_sign_but_speaker_name_does_not():
                     ('0:01:12.08', '0:01:15.00', 'dialogue'),
                     ('0:01:20.50', '0:01:21.00', 'OVER HERE'),
                     ('0:01:21.08', '0:01:22.00', 'more dialogue')), cc=cc)
-    assert ev['BA-BUMP'][:2] == ('0:01:10.00', '0:01:12.60')  # sound's span, not the 5s dialogue extension
-    assert ev['OVER HERE'][:2] == ('0:01:20.50', '0:01:22.00')  # speaker label ignored, normal extension
+    assert ev['BA-BUMP'][:2] == ('0:01:10.00', '0:01:12.00')  # starts with the sound, listed end kept
+    assert ev['OVER HERE'][:2] == ('0:01:20.50', '0:01:22.00')  # speaker label ignored: listed start, 1.5 s
 
 def test_cc_sound_used_for_one_sign_only():
     cc = ass(('0:01:30.00', '0:01:35.00', '（うなり声）'))
     _, ev = fix(ass(('0:01:30.00', '0:01:31.00', 'URGH'), ('0:01:34.00', '0:01:34.50', 'RUMBLE')), cc=cc)
-    assert ev['URGH'][:2] == ('0:01:30.00', '0:01:34.00')  # sound span, capped at next sign
-    assert ev['RUMBLE'][0] == '0:01:34.00'
+    assert ev['URGH'][:2] == ('0:01:30.00', '0:01:31.50')
+    assert ev['RUMBLE'][0] == '0:01:34.00'  # the growl already went to URGH
 
 def test_rerun_is_idempotent_and_overrides_tolerate_comments():
     once = fix(ass(('0:00:01.00', '0:00:02.00', 'SIGN')), overrides='0:00:01.00 0:00:00.50  # visible earlier\n', raw=True)
@@ -128,16 +128,6 @@ def test_rerun_is_idempotent_and_overrides_tolerate_comments():
     assert sum(l.startswith('Style: Sign,') for l in twice) == 1
     assert [l for l in once if l.startswith('Dialogue')] == [l for l in twice if l.startswith('Dialogue')]
     assert once[-1].split(',')[1] == '0:00:00.50'
-
-def test_sign_never_runs_past_shot_change_after_listed_end():
-    # WHOA?!/SURGE at 18:31: listed end 0.09s before a shot change, then dialogue would extend it 1.7s
-    _, ev = fix(ass(('0:00:10.00', '0:00:11.40', 'WHOA?!'),
-                    ('0:00:11.50', '0:00:13.20', 'Amamiya!'),
-                    ('0:00:20.00', '0:00:21.00', 'HELD BACK'),
-                    ('0:00:21.08', '0:00:23.00', 'line')),
-                cuts='11.49\n17.00\n22.00\n', overrides='0:00:20.00 0:00:17.50\n')
-    assert ev['WHOA?!'][:2] == ('0:00:10.00', '0:00:11.49')
-    assert ev['HELD BACK'][:2] == ('0:00:17.50', '0:00:22.00')  # cut before its listed start doesn't count
 
 def test_sign_stays_top_when_bottom_dialogue_also_overlaps():
     # BA-BUMP 18:22: overlapped top dialogue once and bottom dialogue three times; moving it made it jump
@@ -215,12 +205,6 @@ def test_remux_plan_keeps_all_subs_unless_strip_and_replaces_an_earlier_fixed_tr
     again = NETFLIX[:3] + [trk(9, 'subtitles', 'eng', 'NF_English (signs fixed v1)')] + NETFLIX[3:]
     keep, order, want = f.plan_remux(again, NETFLIX[3])
     assert 9 not in keep and order.count('0:0') == 1 and want == 9
-
-def test_shot_change_windows_cover_each_sign_and_merge():
-    f = fixep()
-    ev = [('0:00:10.00', 'BA-BUMP', '0:00:11.00'), ('0:00:12.00', 'dialogue', '0:00:14.00'),
-          ('0:00:16.00', 'EEK', '0:00:16.50'), ('0:01:00.00', 'URGH', '0:01:08.00'), ('0:00:00.50', 'GO', '0:00:01.00')]
-    assert f.windows(ev) == [[0, 26.0], [59.0, 73.0]]  # GO, BA-BUMP, EEK chain into one; URGH ends past start+5 s
 
 def test_lock_is_exclusive_and_taken_over_from_a_dead_run():
     f = fixep()

@@ -11,13 +11,13 @@
 #   a Western film whose SDH has [DOOR CLOSES], is left alone
 #   last line on success: "fixed-ass: <path>" (read by mpv/subfix.lua)
 import sys, os, re, json, time, tempfile, subprocess
-from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fixsigns import t, issign
 
 FRAMES, ROWS, LEAD = 16, 5, 2.0  # frames per sign strip, strips per sheet, seconds before the previous line
 STALE = 15 * 60  # a lock this old is from a killed run (a run takes ~1 min)
-VERSION = 2  # v1: tracks named plain "(signs fixed)", before the second review's fixes
+VERSION = 3  # v1: plain "(signs fixed)", before the second review; v2: signs tracked the drawn text (dialogue
+             # chains, shot changes, CC end); v3: signs last their reading time
 
 def fixed_version(n):  # None: not one of ours; 1: unversioned "(signs fixed)"
     m = re.search(r'\(signs fixed(?: v(\d+))?\)$', n)
@@ -90,30 +90,6 @@ def lock(wd):
                 return None
             os.remove(path)
 
-def windows(ev):
-    # only where the cuts rule looks: from 1 s before each sign (a cut right at it) to 5 s past the furthest it can
-    # run (listed end, or listed start + CAP when extended); overlapping windows merged.
-    # Decoding the whole episode took 38 of a run's 42 s
-    wins = []
-    for s, txt, e in sorted(ev, key=lambda x: t(x[0])):
-        if not issign(txt): continue
-        a, b = max(0, t(s) - 1), max(t(e), t(s) + 5) + 5
-        if wins and a <= wins[-1][1]:
-            wins[-1][1] = max(wins[-1][1], b)
-        else:
-            wins.append([a, b])
-    return wins
-
-def shot_changes(mkv, ev):
-    def scan(w):
-        a, b = w
-        log = subprocess.run(['ffmpeg', '-nostdin', '-ss', f'{a:.3f}', '-t', f'{b - a:.3f}', '-i', mkv, '-an', '-sn',
-                              '-vf', "scale=320:-2,select='gt(scene,0.25)',showinfo", '-f', 'null', '-'],
-                             check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL).stderr
-        return [a + float(x) for x in re.findall(r'pts_time:([0-9.]+)', log)]  # pts restart at 0 after -ss
-    with ThreadPoolExecutor(max(1, (os.cpu_count() or 2) // 2)) as pool:
-        return sorted(c for found in pool.map(scan, windows(ev)) for c in found)
-
 def main():
     if hasattr(os, 'nice'):
         os.nice(10)  # mpv may be playing this very file: let playback have the CPU first (children inherit it)
@@ -164,12 +140,8 @@ def main():
             print(f"no ALL-CAPS signs in '{name(eng) or 'English'}': nothing to fix, no output written")
             return
 
-        cuts = os.path.join(wd, 'cuts.txt')  # cached
-        if not os.path.exists(cuts):
-            open(cuts, 'w').write(''.join(f'{c:.3f}\n' for c in shot_changes(mkv, ev)))
-
         ovr = os.path.join(here, 'overrides', slug + '.txt')
-        args = [eng_ass, fixed, '--cuts', cuts, '--ref', ref_ass] + (['--cc', cc_ass] if cc else []) \
+        args = [eng_ass, fixed, '--ref', ref_ass] + (['--cc', cc_ass] if cc else []) \
             + (['--overrides', ovr] if os.path.exists(ovr) else [])
         print(run(sys.executable, '-I', os.path.join(here, 'fixsigns.py'), *args), end='')
 

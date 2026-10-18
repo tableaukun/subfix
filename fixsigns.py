@@ -2,14 +2,16 @@
 # (streaming subs never show a sign and dialogue at once, so one of them gets delayed or cut short).
 #   --ref  subtitle track in the audio's language (Japanese for anime), timed to the speech: restores dialogue
 #          that was delayed/cut short by a sign. --jpn is the old name
-#   --cc   Japanese CC track: lines entirely in （…） are sound labels; they give real start/end for SFX signs
-#   --cuts shot-change times (seconds, one per line): drawn text leaves with its shot, so no sign runs past
-#          the first shot change after its listed end (Netflix often ends a sign exactly there)
+#   --cc   Japanese CC track: lines entirely in （…） are sound labels; they give the real start of SFX signs
 #   --overrides  lines of "old_start new_start" (ASS times) for signs held back behind dialogue, picked by eye
 #                from contact sheets (scene-cut detection got only 3 of 7 right)
-# usage: fixsigns.py in.ass out.ass [--ref R] [--cc C] [--cuts S] [--overrides O]
+# Signs last long enough to read, like dialogue, not for as long as the drawn text is on screen: at least as listed,
+# READ_MIN at minimum, READ_CPS characters a second. (Tracking the drawn text needed a dialogue-chain heuristic and a
+# shot-change scan; reading time differed by under 0.5 s past a shot change for 5 of 38 signs.)
+# usage: fixsigns.py in.ass out.ass [--ref R] [--cc C] [--overrides O]
 import argparse, re
-GAP, CAP = 0.3, 5.0  # ponytail: heuristic; sign's true on-screen time is unknown, cap keeps it sane
+READ_MIN, READ_CPS = 1.5, 17  # Netflix-style reading speed; signs sit at the top, so a little slower than 20 cps
+CAP = 5.0  # a CC sound label may start up to this long before its (held-back) sign
 ADJ, SNAP = 0.15, 0.1  # adjacency to a sign, "already aligned" tolerance
 
 def t(s): h, m, x = s.split(':'); return int(h)*3600 + int(m)*60 + float(x)
@@ -27,12 +29,12 @@ def cues(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('src'); ap.add_argument('dst')
-    ap.add_argument('--ref', '--jpn', dest='ref'); ap.add_argument('--cc'); ap.add_argument('--cuts'); ap.add_argument('--overrides')
+    ap.add_argument('--ref', '--jpn', dest='ref'); ap.add_argument('--cc'); ap.add_argument('--overrides')
     a = ap.parse_args()
     lines = open(a.src, encoding='utf-8-sig').read().splitlines()
     has_sign_style = any(l.startswith('Style: Sign,') for l in lines)
     added = False
-    head, ev = [], []  # ev: [start, end, is_sign, fields, fixed_by_cc]
+    head, ev = [], []  # ev: [start, end, is_sign, fields]
     dlg_size = dlg_mv = None  # first non-Sign style: dialogue font size and vertical margin
     for l in lines:
         if l.startswith('Dialogue:'):
@@ -44,7 +46,7 @@ def main():
                 p[3] = 'Sign'
                 txt = re.sub(r'\\an\d', '', txt).replace('{}', '')
             p[9] = txt
-            ev.append([t(p[1]), t(p[2]), sign, p, False])
+            ev.append([t(p[1]), t(p[2]), sign, p])
         else:
             head.append(l)
             if l.startswith('Style:') and not l.startswith('Style: Sign,') and dlg_size is None:
@@ -100,9 +102,9 @@ def main():
             m = [k for k, (s, x, _) in enumerate(snd) if k not in used and s <= e[0] + SNAP and x > e[0] and s >= e[0] - CAP]
             if m:
                 k = m[0]; used.add(k)
-                print(f"cc    {ts(e[0])}-{ts(e[1])} -> {ts(min(e[0], snd[k][0]))}-{ts(max(e[1], snd[k][1]))}  "
-                      f"{plain(e[3][9])[:24]} = {snd[k][2]}")
-                e[0], e[1], e[4] = min(e[0], snd[k][0]), max(e[1], snd[k][1]), True
+                if snd[k][0] < e[0]:
+                    print(f"cc    {ts(e[0])} -> {ts(snd[k][0])}  {plain(e[3][9])[:24]} = {snd[k][2]}")
+                    e[0] = snd[k][0]
 
     if a.overrides:
         ovr = {}
@@ -116,24 +118,9 @@ def main():
                 print(f"sign  {e[3][1]} -> {ts(new)}  {plain(e[3][9])[:40]}")
                 e[0] = new
 
-    for i, e in enumerate(ev):
-        if not e[2] or e[4]: continue  # CC-timed signs already have a real end
-        # whole following lines only, within CAP of the sign's listed start; a partial extension to CAP
-        # made every short reaction sign (HUH?, HMM?) last exactly 5s
-        end, j, start = e[1], i + 1, t(e[3][1])
-        while j < len(ev) and not ev[j][2] and ev[j][0] - end <= GAP and ev[j][1] - start <= CAP:
-            end = ev[j][1]; j += 1
-        e[1] = max(e[1], end)
-
-    if a.cuts:
-        cuts = sorted(float(x) for x in open(a.cuts) if x.strip())
-        for e in ev:
-            if not e[2]: continue
-            listed_end = t(e[3][2])
-            c = next((c for c in cuts if c >= listed_end - ADJ and c > e[0]), None)
-            if c is not None and c < e[1]:
-                print(f"cut   {ts(e[1])} -> {ts(max(c, listed_end))}  {plain(e[3][9])[:40]}")
-                e[1] = max(c, listed_end)
+    for e in ev:
+        if e[2]:  # long enough to read (from its possibly earlier start), never shorter than listed
+            e[1] = max(e[1], e[0] + max(READ_MIN, len(plain(e[3][9]).strip()) / READ_CPS))
 
     signs = sorted((e for e in ev if e[2]), key=lambda e: e[0])
     for x, y in zip(signs, signs[1:]):
