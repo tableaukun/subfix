@@ -169,7 +169,8 @@ def test_ts_rounds_to_whole_centiseconds():
 
 # fixep.py decisions, on track listings shaped like mkvmerge -J output (fixep.py is covered here too)
 def trk(i, kind, lang, name='', **flags):
-    return {'id': i, 'type': kind, 'properties': {'language': lang, 'track_name': name, **flags}}
+    codec = {'codec_id': 'S_TEXT/ASS'} if kind == 'subtitles' else {}
+    return {'id': i, 'type': kind, 'properties': {'language': lang, 'track_name': name, **codec, **flags}}
 
 NETFLIX = [trk(0, 'video', 'jpn'), trk(1, 'audio', 'jpn'), trk(2, 'audio', 'jpn'),
            trk(3, 'subtitles', 'eng', 'NF_English'), trk(4, 'subtitles', 'eng', 'NF_English(SDH)'),
@@ -190,6 +191,8 @@ def test_pick_skips_sdh_forced_and_our_own_track():
     assert f.pick(ours, 'eng', False)['id'] == 3  # --force rebuilds from the original, not from our output
     assert f.pick([trk(1, 'subtitles', 'eng', 'Signs & Songs'), trk(2, 'subtitles', 'eng', 'Accessible')],
                   'eng', False)['id'] == 2  # whole words: "Accessible" isn't CC
+    assert f.pick([trk(1, 'subtitles', 'eng', codec_id='S_HDMV/PGS'), trk(2, 'subtitles', 'eng', codec_id='S_TEXT/UTF8')],
+                  'eng', False) is None  # bitmap and SRT subs can't be fixed
 
 def test_fixed_track_versions():
     f = fixep()
@@ -258,10 +261,16 @@ def test_only_serialized_subs_count():
     from fixsigns import serialized
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, 'x')
-        for body, want in ((ass(('0:00:01.00', '0:00:02.00', 'SIGN'), ('0:00:02.00', '0:00:04.00', 'talk')), True),
-                           (ass(('0:00:01.00', '0:00:03.00', 'SIGN'), ('0:00:02.00', '0:00:04.00', 'talk')), False),
-                           (ass(('0:00:01.00', '0:00:02.00', '{\\pos(640,80)}SIGN'), ('0:00:03.00', '0:00:04.00', 'x')), False),
-                           (ass(('0:00:01.00', '0:00:02.00', 'only dialogue')), False)):
+        two = (('0:00:01.00', '0:00:02.00', 'TRAINING ROOM'), ('0:00:02.00', '0:00:04.00', 'talk'),
+               ('0:00:05.00', '0:00:06.00', 'EPISODE 27\\NADMIRATION'))
+        for body, want in ((ass(*two), True),
+                           (ass(*two, ('0:00:05.50', '0:00:07.00', 'talk over a sign')), False),
+                           (ass(('0:00:01.00', '0:00:02.00', '{\\pos(640,80)}SIGN'), *two[1:]), False),
+                           (ass(('0:00:01.00', '0:00:02.00', '{\\move(0,0,9,9)}SIGN'), *two[1:]), False),
+                           (ass(('0:00:01.00', '0:00:02.00', 'only dialogue')), False),
+                           (ass(('0:00:01.00', '0:00:02.00', 'OK.'), ('0:00:03.00', '0:00:04.00', 'MINATO!'),
+                                ('0:00:05.00', '0:00:06.00', 'OH MY GOD!'), ('0:00:07.00', '0:00:08.00', 'TV'),
+                                ('0:00:09.00', '0:00:10.00', 'plain talk')), False)):  # shouts aren't signs
             open(p, 'w').write(body)
             assert serialized(p) is want, body
 

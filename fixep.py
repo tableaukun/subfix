@@ -35,11 +35,12 @@ def mkvtool(*a): return run(*a, ok=(0, 1))  # mkvtoolnix exits 1 on warnings, ou
 def name(x): return x['properties'].get('track_name') or ''
 
 def pick(subs, lang, cc):
-    # cc=False: full subs, not SDH/CC/forced/signs-only and not our own output; cc=True: the hearing-impaired track
+    # cc=False: full subs, not SDH/CC/forced/signs-only and not our own output; cc=True: the hearing-impaired track.
+    # ASS/SSA text only: Netflix rips come as ASS; bitmap (PGS) or SRT tracks are out of scope
     for x in subs:
         pr, n = x['properties'], name(x).lower()
         hi = bool(pr.get('flag_hearing_impaired') or re.search(r'\b(cc|sdh)\b', n))
-        if fixed_version(n) or pr.get('language') != lang or hi != cc:
+        if fixed_version(n) or pr.get('language') != lang or hi != cc or pr.get('codec_id') not in ('S_TEXT/ASS', 'S_TEXT/SSA'):
             continue
         if cc or not (pr.get('forced_track') or re.search(r'\b(forced|signs?)\b', n)):
             return x
@@ -159,12 +160,12 @@ def main():
     # CC sound labels are parsed in the Japanese format （…） only; other languages just skip that step
     eng = pick(subs, 'eng', False)
     ref, cc = (pick(subs, lang, False), pick(subs, lang, True) if lang == 'jpn' else None) if lang else (None, None)
-    why = None if eng and lang else 'English-language audio' if eng else 'no full English subtitle track'
+    why = None if eng and lang else 'English-language audio' if eng else 'no full English ASS subtitle track'
     if why and not ours:
         print(f'{why}: skipped, file untouched')
         return
     wd = os.path.join(root, slug)
-    os.makedirs(os.path.join(wd, 'sheets'), exist_ok=True)
+    os.makedirs(wd, exist_ok=True)
     held = lock(wd)
     if not held:
         print('another run is fixing this episode: skipped')
@@ -179,7 +180,7 @@ def main():
             print(f'failed before on this exact file (see {failed}): skipped, use --force to retry')
             return
         if seen(clean):
-            print(f'{open(clean).read().split(chr(10))[1]}: nothing to fix (checked before), file untouched')
+            print(f"{(open(clean).read().split(chr(10)) + ['subs'])[1]}: nothing to fix (checked before), file untouched")
             return
         eng_ass, ref_ass, cc_ass, fixed = (os.path.join(wd, n) for n in ('eng.ass', f'{lang}.ass', f'{lang}cc.ass', 'eng.fixed.ass'))
         if not why:
@@ -200,6 +201,7 @@ def main():
                                              and not any(fixed_version(name(x)) for x in new))
             print(problem or f'{why}: removed the old fixed track, original English is the default again')
             return
+        os.makedirs(os.path.join(wd, 'sheets'), exist_ok=True)
         ev = [(q[1], q[9], q[2]) for q in (l.split(',', 9) for l in open(eng_ass, encoding='utf-8-sig') if l.startswith('Dialogue:'))]
 
         ovr = os.path.join(here, 'overrides', slug + '.txt')

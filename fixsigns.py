@@ -13,8 +13,8 @@
 #                changes, then runs this again with
 #   --cuts shot-change times found in those stretches: the drawn text has left, so the sign ends at the change
 #          instead, never before its listed end
-# Only serialized subs are touched (serialized()): typeset ones, e.g. Crunchyroll's, have \pos signs over dialogue.
-# usage: fixsigns.py in.ass out.ass [--ref R] [--cc C] [--stretches W | --cuts S] [--overrides O]
+# fixep.py only runs this on serialized subs (serialized()): typeset ones, e.g. Crunchyroll's, have \pos signs.
+# usage: fixsigns.py in.ass out.ass [--ref R] [--cc C] [--stretches W] [--cuts S] [--overrides O]
 import argparse, re
 READ_MIN, READ_CPS = 1.5, 17  # Netflix-style reading speed; signs sit at the top, so a little slower than 20 cps
 CAP = 5.0  # a CC sound label may start up to this long before its (held-back) sign
@@ -34,12 +34,15 @@ def cues(path):
                                                if l.startswith('Dialogue:'))]
 def serialized(path):
     # streaming-style: ALL-CAPS signs that never share the screen with dialogue, and nothing positioned by hand.
-    # Typeset subs (Crunchyroll, fansubs) put \pos signs over the dialogue; plain subs without caps have no signs
+    # Typeset subs (Crunchyroll, fansubs) put \pos signs over the dialogue. Plain subs can have a caps shout
+    # ("OK.", "MINATO!"), so at least 2 signs must read like labels: several words, no closing punctuation
+    # ("TRAINING ROOM", "EPISODE 27 ADMIRATION"; 8 of 9 and 23 of 38 in two Netflix episodes)
     if re.search(r'\\(pos|move)\(', open(path, encoding='utf-8-sig').read()):
         return False
     ev = cues(path)
     signs, dlg = [e for e in ev if issign(e[2])], [e for e in ev if not issign(e[2])]
-    return bool(signs) and not any(s[0] < d[1] - SNAP and d[0] < s[1] - SNAP for s in signs for d in dlg)
+    labels = [s for s in signs if ' ' in plain(s[2]).strip() and not re.search(r'[.!?]["\')]*$', plain(s[2]).strip())]
+    return len(labels) >= 2 and not any(s[0] < d[1] - SNAP and d[0] < s[1] - SNAP for s in signs for d in dlg)
 
 def main():
     ap = argparse.ArgumentParser()

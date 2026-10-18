@@ -42,8 +42,11 @@ priority). What it prints:
 - `already fixed (v5): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
   overrides). A file fixed by an older version is redone automatically
 - `English-language audio: skipped`: never touched, e.g. an English film whose SDH has `[DOOR CLOSES]`
-- `… isn't streaming-style …: nothing to fix`: typeset subs (e.g. Crunchyroll) or no signs; file untouched.
-  Remembered, so later opens skip it at once until the file changes
+- `… isn't streaming-style …: nothing to fix`: typeset subs (e.g. Crunchyroll), or fewer than 2 caps signs that
+  read like labels (several words, no closing `.`/`!`/`?`; a shouted "OK." or "MINATO!" doesn't count); file
+  untouched. Checking takes one read of the file (a few seconds) on its first open, then it's remembered until the
+  file changes
+- `no full English ASS subtitle track: skipped`: bitmap (PGS) or SRT English subs aren't handled
 - `another run is fixing this episode: skipped`: e.g. two mpv windows on one file
 - `failed before on this exact file: skipped`: a run on this file failed (the error is in
   `work/<episode>/failed`); it isn't retried on every open until the file changes or you pass `--force`
