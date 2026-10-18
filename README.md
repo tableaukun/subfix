@@ -108,11 +108,23 @@ subs (usually 5-15 s in). Files already fixed by the current version are skipped
 fixed beforehand start straight away; files fixed by an older version are redone. macOS: Homebrew is found even
 when mpv starts from Finder. Add `strip=yes` to `script-opts/subfix.conf` for the `--strip` behaviour.
 
-- macOS / Linux: `ln -s /path/to/subfix/mpv/subfix.lua ~/.config/mpv/scripts/` (the symlink is followed back
-  to the repo)
-- Windows, or a copied script: copy it to `%APPDATA%\mpv\scripts\` and create `script-opts\subfix.conf` with
-  `fixep=C:\path\to\subfix\fixep.py` (and `python=py` if `python` isn't on PATH). Windows can't replace a file
-  that's playing, so the fix loads for that session but isn't embedded.
+From the `subfix` folder:
+
+macOS / Linux (a symlink, so `git pull` updates it too):
+
+```
+mkdir -p ~/.config/mpv/scripts && ln -sf "$PWD/mpv/subfix.lua" ~/.config/mpv/scripts/
+```
+
+Windows PowerShell (a copy, told where the repo is; add `python=py` to `subfix.conf` if `python` isn't on PATH):
+
+```
+New-Item -Force -ItemType Directory "$env:APPDATA\mpv\scripts", "$env:APPDATA\mpv\script-opts" | Out-Null
+Copy-Item mpv\subfix.lua "$env:APPDATA\mpv\scripts\"
+Set-Content "$env:APPDATA\mpv\script-opts\subfix.conf" "fixep=$PWD\fixep.py"
+```
+
+Windows can't replace a file that's playing, so there the fix loads for that session but isn't embedded.
 
 ## Versions
 
