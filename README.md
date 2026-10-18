@@ -20,6 +20,15 @@ brew install ffmpeg mkvtoolnix                # macOS
 sudo apt install python3 ffmpeg mkvtoolnix    # Debian/Ubuntu
 ```
 
+## Install
+
+```
+git clone https://github.com/tableaukun/subfix.git
+cd subfix
+```
+
+`git pull` in that folder updates it; files fixed by an older version are redone on their next run.
+
 ## Usage
 
 From the `subfix` folder (or give the full path to `fixep.py`). One file:
