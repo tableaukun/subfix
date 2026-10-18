@@ -1,6 +1,6 @@
-# One-shot driver: extract English + Japanese subs from a streaming-sourced MKV, run fixsigns.py, write contact sheets
-# for signs that may have been held back behind dialogue, and remux the fixed track into the same file as the
-# default English (original English and every other track kept; --strip drops non-English/Japanese subtitles).
+# One-shot driver: extract the English and original-language subs from a Netflix-sourced MKV, run fixsigns.py, write
+# contact sheets for signs that may have been held back behind dialogue, and remux the fixed track into the same file as the
+# default English (original English and every other track kept; --strip keeps only English + original-language subs).
 # Sign start overrides (picked from the sheets) go in overrides/<slug>.txt; rerun to apply them.
 # usage: fixep.py episode.mkv [workroot] [--force] [--strip]   (default workroot: ./work next to this script)
 #   the fixed track is named "<original> (signs fixed vN)"; a file whose fixed track is already at VERSION is
