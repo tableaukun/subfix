@@ -14,6 +14,7 @@ Writes `<name>[fixed-eng].mkv` next to the input (the original is left alone). I
   and extends them over the dialogue that cut them off
 - restores dialogue start/end times from the Japanese track's timing (first `jpn` track that isn't CC/SDH)
 - times sound-effect signs from the Japanese CC track's sound labels, e.g. `（心臓の鼓動）` for BA-BUMP
+- ends every sign by the first shot change after its listed end (drawn text leaves with its shot)
 - writes contact sheets to `work/<episode>/sheets/` for every sign that directly follows another line
   (16 frames from 2 s before that line to the sign; `index.txt` maps rows to signs and frame times)
 

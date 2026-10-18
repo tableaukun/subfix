@@ -30,8 +30,14 @@ if not eng: sys.exit('no full English subtitle track found')
 eng_ass, jpn_ass, cc_ass, fixed = (os.path.join(wd, n) for n in ('eng.ass', 'jpn.ass', 'jpncc.ass', 'eng.fixed.ass'))
 run('mkvextract', mkv, 'tracks', *(f"{x['id']}:{p}" for x, p in ((eng, eng_ass), (jpn, jpn_ass), (jcc, cc_ass)) if x))
 
+cuts = os.path.join(wd, 'cuts.txt')  # shot changes, cached: a full decode takes ~30s
+if not os.path.exists(cuts):
+    log = subprocess.run(['ffmpeg', '-i', mkv, '-an', '-sn', '-vf', "scale=320:-2,select='gt(scene,0.25)',showinfo",
+                          '-f', 'null', '-'], check=True, capture_output=True, text=True).stderr
+    open(cuts, 'w').write(''.join(x + '\n' for x in re.findall(r'pts_time:([0-9.]+)', log)))
+
 ovr = os.path.join(here, 'overrides', slug + '.txt')
-args = [eng_ass, fixed] + (['--jpn', jpn_ass] if jpn else []) + (['--cc', cc_ass] if jcc else []) \
+args = [eng_ass, fixed, '--cuts', cuts] + (['--jpn', jpn_ass] if jpn else []) + (['--cc', cc_ass] if jcc else []) \
     + (['--overrides', ovr] if os.path.exists(ovr) else [])
 print(run(sys.executable, '-I', os.path.join(here, 'fixsigns.py'), *args), end='')
 

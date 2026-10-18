@@ -17,12 +17,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 def ass(*events):
     return HEAD + ''.join(f"Dialogue: 0,{s},{e},Main,,0,0,0,,{txt}\n" for s, e, txt in events)
 
-def fix(eng, jpn=None, overrides=None, cc=None, raw=False):
+def fix(eng, jpn=None, overrides=None, cc=None, cuts=None, raw=False):
     with tempfile.TemporaryDirectory() as d:
         src, out = os.path.join(d, 'eng'), os.path.join(d, 'out')
         open(src, 'w', encoding='utf-8').write(eng)
         args = [src, out]
-        for flag, body in (('--jpn', jpn), ('--overrides', overrides), ('--cc', cc)):
+        for flag, body in (('--jpn', jpn), ('--overrides', overrides), ('--cc', cc), ('--cuts', cuts)):
             if body is not None:
                 path = os.path.join(d, flag[2:])
                 open(path, 'w', encoding='utf-8').write(body)
@@ -123,6 +123,16 @@ def test_rerun_is_idempotent_and_overrides_tolerate_comments():
     assert sum(l.startswith('Style: Sign,') for l in twice) == 1
     assert [l for l in once if l.startswith('Dialogue')] == [l for l in twice if l.startswith('Dialogue')]
     assert once[-1].split(',')[1] == '0:00:00.50'
+
+def test_sign_never_runs_past_shot_change_after_listed_end():
+    # WHOA?!/SURGE at 18:31: listed end 0.09s before a shot change, then dialogue would extend it 1.7s
+    _, ev = fix(ass(('0:00:10.00', '0:00:11.40', 'WHOA?!'),
+                    ('0:00:11.50', '0:00:13.20', 'Amamiya!'),
+                    ('0:00:20.00', '0:00:21.00', 'HELD BACK'),
+                    ('0:00:21.08', '0:00:23.00', 'line')),
+                cuts='11.49\n17.00\n22.00\n', overrides='0:00:20.00 0:00:17.50\n')
+    assert ev['WHOA?!'][:2] == ('0:00:10.00', '0:00:11.49')
+    assert ev['HELD BACK'][:2] == ('0:00:17.50', '0:00:22.00')  # cut before its listed start doesn't count
 
 if __name__ == '__main__':
     tests = [f for n, f in sorted(globals().items()) if n.startswith('test_')]
