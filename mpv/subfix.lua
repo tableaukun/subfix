@@ -3,7 +3,7 @@
 -- Install (macOS/Linux): ln -s /path/to/subfix/mpv/subfix.lua ~/.config/mpv/scripts/
 -- If the script is copied rather than symlinked (e.g. Windows), set the repo path in
 -- script-opts/subfix.conf:  fixep=C:\path\to\subfix\fixep.py   (optional: python=py)
--- strip=yes in script-opts/subfix.conf also drops non-English/Japanese subtitle tracks (default: keep all)
+-- strip=yes in script-opts/subfix.conf also drops subtitle tracks other than English and the original language
 local utils = require 'mp.utils'
 local options = require 'mp.options'
 local windows = package.config:sub(1, 1) == '\\'

@@ -1,12 +1,13 @@
 # Streaming-style ASS (Netflix etc.) -> signs get own style and their timing is un-serialized from the dialogue
 # (streaming subs never show a sign and dialogue at once, so one of them gets delayed or cut short).
-#   --jpn  Japanese-audio track of the same release: restores dialogue that was delayed/cut short by a sign
+#   --ref  subtitle track in the audio's language (Japanese for anime), timed to the speech: restores dialogue
+#          that was delayed/cut short by a sign. --jpn is the old name
 #   --cc   Japanese CC track: lines entirely in （…） are sound labels; they give real start/end for SFX signs
 #   --cuts shot-change times (seconds, one per line): drawn text leaves with its shot, so no sign runs past
 #          the first shot change after its listed end (Netflix often ends a sign exactly there)
 #   --overrides  lines of "old_start new_start" (ASS times) for signs held back behind dialogue, picked by eye
 #                from contact sheets (scene-cut detection got only 3 of 7 right)
-# usage: fixsigns.py in.ass out.ass [--jpn J] [--cc C] [--cuts S] [--overrides O]
+# usage: fixsigns.py in.ass out.ass [--ref R] [--cc C] [--cuts S] [--overrides O]
 import argparse, re
 GAP, CAP = 0.3, 5.0  # ponytail: heuristic; sign's true on-screen time is unknown, cap keeps it sane
 ADJ, SNAP = 0.15, 0.1  # adjacency to a sign, "already aligned" tolerance
@@ -26,7 +27,7 @@ def cues(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('src'); ap.add_argument('dst')
-    ap.add_argument('--jpn'); ap.add_argument('--cc'); ap.add_argument('--cuts'); ap.add_argument('--overrides')
+    ap.add_argument('--ref', '--jpn', dest='ref'); ap.add_argument('--cc'); ap.add_argument('--cuts'); ap.add_argument('--overrides')
     a = ap.parse_args()
     lines = open(a.src, encoding='utf-8-sig').read().splitlines()
     has_sign_style = any(l.startswith('Style: Sign,') for l in lines)
@@ -54,8 +55,8 @@ def main():
                 head.append(','.join(f))
                 has_sign_style = added = True
 
-    if a.jpn:
-        jp = [(s, e) for s, e, _ in cues(a.jpn)]
+    if a.ref:
+        jp = [(s, e) for s, e, _ in cues(a.ref)]
         dlg = [e for e in ev if not e[2]]
         pos = {id(e): k for k, e in enumerate(dlg)}  # by identity: two identical lines must keep their own neighbours
         for i, e in enumerate(ev):

@@ -6,8 +6,9 @@
 #   the fixed track is named "<original> (signs fixed vN)"; a file whose fixed track is already at VERSION is
 #   skipped unless --force (e.g. after editing its overrides). Bump VERSION whenever the output would change,
 #   so every older file is redone on its next run or mpv open
-#   only touches Japanese-audio releases with a Japanese subtitle track (Netflix-style anime): anything else,
-#   e.g. a Western film whose SDH has [DOOR CLOSES], is left alone
+#   only touches non-English-audio releases with a subtitle track in the audio language, the timing reference
+#   (built and tested on Netflix anime; Korean, Spanish etc. should work but are untested): anything else, e.g.
+#   a Western film whose SDH has [DOOR CLOSES], is left alone
 #   last line on success: "fixed-ass: <path>" (read by mpv/subfix.lua)
 import sys, os, re, json, time, tempfile, subprocess
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -39,18 +40,21 @@ def pick(subs, lang, cc):
         if cc or not (pr.get('forced_track') or re.search(r'\b(forced|signs?)\b', n)):
             return x
 
-def candidate(tracks):
-    # Netflix-style anime: Japanese audio plus a Japanese subtitle track (the timing reference)
+def original_language(tracks):
+    # first non-English audio language that also has a full subtitle track (timed to that speech): the reference.
+    # A dual-audio release with an English dub first still finds its Japanese/Korean/... original
     subs = [x for x in tracks if x['type'] == 'subtitles']
-    return (any(x['type'] == 'audio' and x['properties'].get('language') == 'jpn' for x in tracks)
-            and pick(subs, 'jpn', False) is not None)
+    for x in tracks:
+        lang = x['properties'].get('language')
+        if x['type'] == 'audio' and lang not in ('eng', 'und', None) and pick(subs, lang, False):
+            return lang
 
-def plan_remux(tracks, eng, strip=False):
+def plan_remux(tracks, eng, strip=False, lang='jpn'):
     # fixed track (input 0) goes in just before the original English one; an earlier fixed track is dropped;
-    # strip (opt-in): only English and Japanese subtitle tracks kept. Video, audio, fonts and chapters untouched
+    # strip (opt-in): only English and original-language subtitle tracks kept. Video, audio, fonts, chapters untouched
     subs = [x for x in tracks if x['type'] == 'subtitles']
     keep = [x['id'] for x in subs if not fixed_version(name(x))
-            and (not strip or x['properties'].get('language') in ('eng', 'jpn'))]
+            and (not strip or x['properties'].get('language') in ('eng', lang))]
     order = [f"1:{x['id']}" for x in tracks if x['type'] != 'subtitles' or x['id'] in keep]
     order.insert(order.index(f"1:{eng['id']}"), '0:0')
     return keep, order, len(tracks) - len(subs) + len(keep) + 1
@@ -102,10 +106,12 @@ def main():
         return
     if done:
         print(f'fixed by v{done}, current is v{VERSION}: redoing')
-    if not candidate(tracks):
-        print('not a Japanese-audio release with Japanese subs: skipped, file untouched')
+    lang = original_language(tracks)
+    if not lang:
+        print('not a non-English-audio release with original-language subs: skipped, file untouched')
         return
-    eng, jpn, jcc = pick(subs, 'eng', False), pick(subs, 'jpn', False), pick(subs, 'jpn', True)
+    # CC sound labels are parsed in the Japanese format （…） only; other languages just skip that step
+    eng, ref, cc = pick(subs, 'eng', False), pick(subs, lang, False), pick(subs, lang, True) if lang == 'jpn' else None
     if not eng:
         sys.exit('no full English subtitle track found')
 
@@ -123,8 +129,8 @@ def main():
             if f.startswith('.' + base + '.') and f.endswith('.subfix-tmp'):
                 os.remove(os.path.join(d, f))
 
-        eng_ass, jpn_ass, cc_ass, fixed = (os.path.join(wd, n) for n in ('eng.ass', 'jpn.ass', 'jpncc.ass', 'eng.fixed.ass'))
-        mkvtool('mkvextract', mkv, 'tracks', *(f"{x['id']}:{p}" for x, p in ((eng, eng_ass), (jpn, jpn_ass), (jcc, cc_ass)) if x))
+        eng_ass, ref_ass, cc_ass, fixed = (os.path.join(wd, n) for n in ('eng.ass', f'{lang}.ass', f'{lang}cc.ass', 'eng.fixed.ass'))
+        mkvtool('mkvextract', mkv, 'tracks', *(f"{x['id']}:{p}" for x, p in ((eng, eng_ass), (ref, ref_ass), (cc, cc_ass)) if x))
         ev = [(q[1], q[9], q[2]) for q in (l.split(',', 9) for l in open(eng_ass, encoding='utf-8-sig') if l.startswith('Dialogue:'))]
         if not any(issign(txt) for _, txt, _ in ev):
             # every fix hangs off an ALL-CAPS sign; none means the subs weren't serialized
@@ -139,13 +145,13 @@ def main():
             open(cuts, 'w').write(''.join(x + '\n' for x in re.findall(r'pts_time:([0-9.]+)', log)))
 
         ovr = os.path.join(here, 'overrides', slug + '.txt')
-        args = [eng_ass, fixed, '--cuts', cuts] + (['--jpn', jpn_ass] if jpn else []) + (['--cc', cc_ass] if jcc else []) \
+        args = [eng_ass, fixed, '--cuts', cuts, '--ref', ref_ass] + (['--cc', cc_ass] if cc else []) \
             + (['--overrides', ovr] if os.path.exists(ovr) else [])
         print(run(sys.executable, '-I', os.path.join(here, 'fixsigns.py'), *args), end='')
 
-        rows = sheets(mkv, wd, ev, cc_ass if jcc else None)
+        rows = sheets(mkv, wd, ev, cc_ass if cc else None)
 
-        keep, order, want = plan_remux(tracks, eng, strip)
+        keep, order, want = plan_remux(tracks, eng, strip, lang)
         fd, tmp = tempfile.mkstemp(dir=d, prefix='.' + base + '.', suffix='.subfix-tmp')
         os.close(fd)
         mkvtool('mkvmerge', '-q', '-o', tmp, '--track-order', ','.join(order), '--language', '0:eng',

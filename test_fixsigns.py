@@ -22,7 +22,7 @@ def fix(eng, jpn=None, overrides=None, cc=None, cuts=None, raw=False):
         src, out = os.path.join(d, 'eng'), os.path.join(d, 'out')
         open(src, 'w', encoding='utf-8').write(eng)
         args = [src, out]
-        for flag, body in (('--jpn', jpn), ('--overrides', overrides), ('--cc', cc), ('--cuts', cuts)):
+        for flag, body in (('--ref', jpn), ('--overrides', overrides), ('--cc', cc), ('--cuts', cuts)):
             if body is not None:
                 path = os.path.join(d, flag[2:])
                 open(path, 'w', encoding='utf-8').write(body)
@@ -189,14 +189,22 @@ def test_fixed_track_versions():
     assert f.fixed_version('NF_English (signs fixed)') == 1  # tracks from before versioning
     assert f.fixed_version('NF_English') is None and f.fixed_version('Signs fixed by fansubber') is None
 
-def test_only_japanese_audio_with_japanese_subs_is_a_candidate():
+def test_original_language_is_the_non_english_audio_with_matching_subs():
     f = fixep()
-    assert f.candidate(NETFLIX)
+    assert f.original_language(NETFLIX) == 'jpn'
     western = [trk(0, 'video', 'und'), trk(1, 'audio', 'eng'), trk(2, 'subtitles', 'eng', 'English SDH'),
                trk(3, 'subtitles', 'fre', 'French')]
     crunchyroll = [trk(0, 'video', 'und'), trk(1, 'audio', 'jpn'), trk(2, 'subtitles', 'eng', 'English subs')]
-    with_jpn_subs = western + [trk(4, 'subtitles', 'jpn', 'Japanese')]  # English audio: not anime, leave it
-    assert not f.candidate(western) and not f.candidate(crunchyroll) and not f.candidate(with_jpn_subs)
+    with_jpn_subs = western + [trk(4, 'subtitles', 'jpn', 'Japanese')]  # English audio: no sign translations
+    assert f.original_language(western) is None and f.original_language(crunchyroll) is None
+    assert f.original_language(with_jpn_subs) is None
+    kdrama = [trk(0, 'video', 'und'), trk(1, 'audio', 'kor'), trk(2, 'subtitles', 'eng', 'English'),
+              trk(3, 'subtitles', 'kor', 'Korean'), trk(4, 'subtitles', 'spa', 'Spanish')]
+    assert f.original_language(kdrama) == 'kor'
+    dub_first = [trk(0, 'video', 'und'), trk(1, 'audio', 'eng'), trk(2, 'audio', 'jpn')] + NETFLIX[3:]
+    assert f.original_language(dub_first) == 'jpn'
+    keep, _, _ = f.plan_remux(kdrama, kdrama[2], strip=True, lang='kor')
+    assert keep == [2, 3]  # --strip keeps English and the original language
 
 def test_remux_plan_keeps_all_subs_unless_strip_and_replaces_an_earlier_fixed_track():
     f = fixep()

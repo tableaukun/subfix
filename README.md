@@ -1,8 +1,13 @@
 # subfix
 
-Fixes English subs in streaming-sourced anime MKVs (Netflix, and others with the same style).
-Netflix-style subs never show a sign and dialogue at the same time, so on-screen-text translations
-(ALL-CAPS lines) and dialogue get delayed or cut short around each other.
+Fixes English subs in Netflix-sourced MKVs of non-English shows. Netflix never shows a sign (an on-screen-text
+translation, in ALL CAPS) and dialogue at the same time, so the two get delayed or cut short around each other.
+
+**Scope:** built for and tested on Netflix **anime** (Japanese audio). The same subtitle rule applies to every
+non-English Netflix show, so a Korean drama or a Spanish series gets the core fixes too, using its own
+original-language subtitle track as the timing reference, but that is untested. The CC sound-label step (below)
+reads the Japanese CC format only and is skipped for other languages. English-language shows have no sign
+translations and are left alone.
 
 ## Requirements
 
@@ -33,14 +38,14 @@ Each file takes about 40 s (most of it shot-change detection). What it prints:
 - `updated: … (default English: … (signs fixed v2))`: fixed
 - `already fixed (v2): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
   overrides). A file fixed by an older version is redone automatically
-- `not a Japanese-audio release with Japanese subs: skipped`: only Netflix-style anime is touched (Japanese audio
-  plus a Japanese subtitle track as the timing reference), never e.g. a Western film
+- `not a non-English-audio release with original-language subs: skipped`: only shows with non-English audio and
+  a subtitle track in that language (the timing reference) are touched, never e.g. an English-language film
 - `no ALL-CAPS signs …: nothing to fix`: subs aren't Netflix-style (e.g. typeset Crunchyroll subs); file untouched
 - `another run is fixing this episode: skipped`: e.g. two mpv windows on one file
 
 The fixed subs are added to the same file as the default English track, named `<original> (signs fixed vN)`, just
 before the original English track (kept, no longer default). Every other track is kept. With `--strip`, subtitle
-tracks other than English and Japanese are removed for good (opt-in). The file is rewritten to a hidden temp copy
+tracks other than English and the original language are removed for good (opt-in). The file is rewritten to a hidden temp copy
 next to it, checked, then swapped in, so a failed or killed run leaves the original as it was. A symlinked episode
 is fixed at its target.
 
@@ -48,8 +53,10 @@ is fixed at its target.
 
 - signs get their own top-of-screen `Sign` style and are extended over the dialogue that cut them off. Dialogue
   Netflix lifted to the top (to keep clear of drawn text) keeps the top line and the sign sits under it
-- dialogue start/end times are restored from the Japanese track's timing (first `jpn` track that isn't CC/SDH)
+- dialogue start/end times are restored from the original-language subtitle track, which is timed to the speech
+  (for anime, the first Japanese track that isn't CC/SDH)
 - sound-effect signs are timed from the Japanese CC track's sound labels, e.g. `（心臓の鼓動）` for BA-BUMP
+  (Japanese only)
 - every sign ends by the first shot change after its listed end (drawn text leaves with its shot)
 
 ## Sign start overrides
