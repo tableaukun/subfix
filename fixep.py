@@ -10,7 +10,7 @@
 #   (built and tested on Netflix anime; Korean, Spanish etc. should work but are untested): anything else, e.g.
 #   a Western film whose SDH has [DOOR CLOSES], is left alone
 #   last line on success: "fixed-ass: <path>" (read by mpv/subfix.lua)
-import sys, os, re, json, time, tempfile, subprocess
+import sys, os, re, json, stat, time, tempfile, subprocess
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fixsigns import t, issign, reading, ADJ
@@ -44,23 +44,28 @@ def pick(subs, lang, cc):
             return x
 
 def original_language(tracks):
-    # first non-English audio language that also has a full subtitle track (timed to that speech): the reference.
-    # A dual-audio release with an English dub first still finds its Japanese/Korean/... original
+    # the audio's language when it isn't English and has a full subtitle track (timed to that speech): the reference.
+    # Default audio first (a dual-audio release with an English dub first still finds its original); commentary
+    # tracks never count, or --strip could delete the real original's subtitles
+    audio = [x for x in tracks if x['type'] == 'audio' and not re.search(r'comment', name(x), re.I)]
     subs = [x for x in tracks if x['type'] == 'subtitles']
-    for x in tracks:
+    for x in sorted(audio, key=lambda x: not x['properties'].get('default_track')):
         lang = x['properties'].get('language')
-        if x['type'] == 'audio' and lang not in ('eng', 'und', None) and pick(subs, lang, False):
+        if lang not in ('eng', 'und', None) and pick(subs, lang, False):
             return lang
 
-def plan_remux(tracks, eng, strip=False, lang='jpn'):
-    # fixed track (input 0) goes in just before the original English one; an earlier fixed track is dropped;
-    # strip (opt-in): only English and original-language subtitle tracks kept. Video, audio, fonts, chapters untouched
+def plan_remux(tracks, strip=False, lang='jpn'):
+    # fixed track (input 0) goes in just before the first English subtitle track (even a forced or SDH one), so it's
+    # the one players pick; earlier fixed tracks are dropped. strip (opt-in): only English and original-language
+    # subtitle tracks kept. Video, audio, fonts and chapters untouched. Returns kept ids, track order, English ids
+    # (to clear their default flag) and the expected track count
     subs = [x for x in tracks if x['type'] == 'subtitles']
     keep = [x['id'] for x in subs if not fixed_version(name(x))
             and (not strip or x['properties'].get('language') in ('eng', lang))]
+    english = [x['id'] for x in subs if x['id'] in keep and x['properties'].get('language') == 'eng']
     order = [f"1:{x['id']}" for x in tracks if x['type'] != 'subtitles' or x['id'] in keep]
-    order.insert(order.index(f"1:{eng['id']}"), '0:0')
-    return keep, order, len(tracks) - len(subs) + len(keep) + 1
+    order.insert(order.index(f"1:{english[0]}"), '0:0')
+    return keep, order, english, len(tracks) - len(subs) + len(keep) + 1
 
 def alive(pid):
     if os.name != 'posix':
@@ -87,8 +92,8 @@ def lock(wd):
                 pid = int(open(path).read().strip() or 0)
             except (OSError, ValueError):
                 pid = 0
-            up = alive(pid) if pid else False
-            if up or (up is None and time.time() - os.path.getmtime(path) < STALE):
+            up = alive(pid) if pid else False  # None: can't tell (Windows)
+            if up is not False and time.time() - os.path.getmtime(path) < STALE:  # a reused pid stops counting too
                 return None
             os.remove(path)
 
@@ -109,7 +114,36 @@ def shot_changes(mkv, wins):
     with ThreadPoolExecutor(max(1, (os.cpu_count() or 2) // 2)) as pool:
         return sorted(c for found in pool.map(scan, wins) for c in found)
 
+def rewrite(mkv, make, check):
+    # write a new version next to the episode with make(tmp), check its track listing, then swap it in atomically:
+    # the original is untouched unless every step succeeds. The temp is hidden and not *.mkv, so players and
+    # folder loops never pick it up. Returns (new tracks, problem or None)
+    d, base = os.path.dirname(mkv), os.path.basename(mkv)
+    for f in os.listdir(d):  # left by killed runs
+        if f.startswith('.' + base + '.') and f.endswith('.subfix-tmp'):
+            os.remove(os.path.join(d, f))
+    fd, tmp = tempfile.mkstemp(dir=d, prefix='.' + base + '.', suffix='.subfix-tmp')
+    os.close(fd)
+    try:
+        make(tmp)
+        new = json.loads(mkvtool('mkvmerge', '-J', tmp))['tracks']
+        if not check(new):
+            sys.exit('remux check failed, original left untouched')
+        if not os.path.exists(mkv):  # moved or deleted meanwhile (e.g. mpv's move-after-play): don't recreate it here
+            sys.exit('original moved or deleted during the fix: left alone')
+        os.chmod(tmp, stat.S_IMODE(os.stat(mkv).st_mode))  # mkstemp makes it 0600; keep the episode's own permissions
+        try:
+            os.replace(tmp, mkv)  # same directory, so the swap is atomic
+        except OSError as err:  # Windows (file open in the player), some network shares: fixed subs still load in mpv
+            return new, f'file in use ({err.strerror}), not rewritten (it will be redone next time)'
+        return new, None
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
 def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
+        sys.exit(__doc__ or 'usage: fixep.py episode.mkv [workroot] [--force] [--strip]')
     if hasattr(os, 'nice'):
         os.nice(10)  # mpv may be playing this very file: let playback have the CPU first (children inherit it)
     here = os.path.dirname(os.path.abspath(__file__))
@@ -122,20 +156,39 @@ def main():
 
     tracks = json.loads(mkvtool('mkvmerge', '-J', mkv))['tracks']
     subs = [x for x in tracks if x['type'] == 'subtitles']
-    done = max((fixed_version(name(x)) or 0 for x in subs), default=0)
-    if done >= VERSION and not force:
-        print(f'already fixed (v{done}): skipped (use --force to redo)')
+    ours = [fixed_version(name(x)) for x in subs if fixed_version(name(x))]
+    if ours == [VERSION] and not force:
+        print(f'already fixed (v{VERSION}): skipped (use --force to redo)')
         return
-    if done:
-        print(f'fixed by v{done}, current is v{VERSION}: redoing')
+    if ours:
+        print(f"fixed before (v{', v'.join(map(str, ours))}), current is v{VERSION}: redoing")
     lang = original_language(tracks)
-    if not lang:
-        print('not a non-English-audio release with original-language subs: skipped, file untouched')
-        return
     # CC sound labels are parsed in the Japanese format （…） only; other languages just skip that step
-    eng, ref, cc = pick(subs, 'eng', False), pick(subs, lang, False), pick(subs, lang, True) if lang == 'jpn' else None
-    if not eng:
-        sys.exit('no full English subtitle track found')
+    eng = pick(subs, 'eng', False)
+    ref, cc = (pick(subs, lang, False), pick(subs, lang, True) if lang == 'jpn' else None) if lang else (None, None)
+    if not lang or not eng:
+        why = 'no full English subtitle track' if lang else 'not a non-English-audio release with original-language subs'
+        if not ours:
+            print(f'{why}: skipped, file untouched')
+            return
+        # an older version fixed a file this one wouldn't touch: take our track out, original English default again
+        wd = os.path.join(root, slug)
+        os.makedirs(wd, exist_ok=True)
+        held = lock(wd)
+        if not held:
+            print('another run is fixing this episode: skipped')
+            return
+        try:
+            keep = [x['id'] for x in subs if not fixed_version(name(x))]
+            dflt = [f"{eng['id']}:yes"] if eng else []
+            _, problem = rewrite(mkv, lambda tmp: mkvtool('mkvmerge', '-q', '-o', tmp, '-s', ','.join(map(str, keep)),
+                                                          *sum((['--default-track-flag', x] for x in dflt), []), mkv),
+                                 lambda new: len(new) == len(tracks) - len(ours)
+                                             and not any(fixed_version(name(x)) for x in new))
+            print(problem or f'{why}: removed the old fixed track, original English is the default again')
+        finally:
+            os.remove(held)
+        return
 
     wd = os.path.join(root, slug)
     os.makedirs(os.path.join(wd, 'sheets'), exist_ok=True)
@@ -143,14 +196,13 @@ def main():
     if not held:
         print('another run is fixing this episode: skipped')
         return
-    tmp = None
+    failed = os.path.join(wd, 'failed')  # a run that fails on this exact file won't be retried on every open
+    st = os.stat(mkv)
+    stamp = f'{st.st_size} {st.st_mtime_ns} v{VERSION}'
     try:
-        # temp copies from killed runs: hidden, not *.mkv, so players and folder loops never pick them up
-        d, base = os.path.dirname(mkv), os.path.basename(mkv)
-        for f in os.listdir(d):
-            if f.startswith('.' + base + '.') and f.endswith('.subfix-tmp'):
-                os.remove(os.path.join(d, f))
-
+        if not force and os.path.exists(failed) and open(failed).read().split('\n')[0] == stamp:
+            print(f'failed before on this exact file (see {failed}): skipped, use --force to retry')
+            return
         eng_ass, ref_ass, cc_ass, fixed = (os.path.join(wd, n) for n in ('eng.ass', f'{lang}.ass', f'{lang}cc.ass', 'eng.fixed.ass'))
         mkvtool('mkvextract', mkv, 'tracks', *(f"{x['id']}:{p}" for x, p in ((eng, eng_ass), (ref, ref_ass), (cc, cc_ass)) if x))
         ev = [(q[1], q[9], q[2]) for q in (l.split(',', 9) for l in open(eng_ass, encoding='utf-8-sig') if l.startswith('Dialogue:'))]
@@ -161,37 +213,35 @@ def main():
 
         cuts = os.path.join(wd, 'cuts.txt')
         open(cuts, 'w').write(''.join(f'{c:.3f}\n' for c in shot_changes(mkv, stretches(ev))))
-
         ovr = os.path.join(here, 'overrides', slug + '.txt')
         args = [eng_ass, fixed, '--ref', ref_ass, '--cuts', cuts] + (['--cc', cc_ass] if cc else []) \
             + (['--overrides', ovr] if os.path.exists(ovr) else [])
         print(run(sys.executable, '-I', os.path.join(here, 'fixsigns.py'), *args), end='')
 
-        rows = sheets(mkv, wd, ev, cc_ass if cc else None)
+        try:  # contact sheets are for checking by eye; never let them block the fix
+            rows = sheets(mkv, wd, ev, cc_ass if cc else None)
+        except (OSError, subprocess.CalledProcessError) as err:
+            rows = []
+            print(f'contact sheets failed ({err}), fixing anyway')
 
-        keep, order, want = plan_remux(tracks, eng, strip, lang)
-        fd, tmp = tempfile.mkstemp(dir=d, prefix='.' + base + '.', suffix='.subfix-tmp')
-        os.close(fd)
-        mkvtool('mkvmerge', '-q', '-o', tmp, '--track-order', ','.join(order), '--language', '0:eng',
-                '--track-name', f"0:{name(eng) or 'English'} (signs fixed v{VERSION})", '--default-track-flag', '0:yes',
-                fixed, '--default-track-flag', f"{eng['id']}:no", '-s', ','.join(map(str, keep)), mkv)
-        new = json.loads(mkvtool('mkvmerge', '-J', tmp))['tracks']
-        first_eng = next((x for x in new if x['type'] == 'subtitles' and x['properties'].get('language') == 'eng'), None)
-        if len(new) != want or not first_eng or fixed_version(name(first_eng)) != VERSION:
-            sys.exit('remux check failed, original left untouched')
-        if not os.path.exists(mkv):  # moved or deleted meanwhile (e.g. mpv's move-after-play): don't recreate it here
-            sys.exit('original moved or deleted during the fix: left alone')
-        try:
-            os.replace(tmp, mkv)  # same directory, so the swap is atomic
-            tmp = None
-            status = f"updated: {mkv} (default English: {name(first_eng)})"
-        except OSError as err:  # Windows (file open in the player), some network shares: fixed subs still load in mpv
-            status = f'file in use ({err.strerror}), fixed track not embedded (it will be redone next time)'
+        keep, order, english, want = plan_remux(tracks, strip, lang)
+        new, problem = rewrite(mkv, lambda tmp: mkvtool(
+            'mkvmerge', '-q', '-o', tmp, '--track-order', ','.join(order), '--language', '0:eng',
+            '--track-name', f"0:{name(eng) or 'English'} (signs fixed v{VERSION})", '--default-track-flag', '0:yes',
+            fixed, *sum((['--default-track-flag', f'{i}:no'] for i in english), []), '-s', ','.join(map(str, keep)), mkv),
+            lambda new: len(new) == want and fixed_version(name(next(
+                x for x in new if x['type'] == 'subtitles' and x['properties'].get('language') == 'eng'))) == VERSION)
+        if os.path.exists(failed):
+            os.remove(failed)
+        title = f"{name(eng) or 'English'} (signs fixed v{VERSION})"
         print(f"workdir: {wd}\nsheets:  {len(rows)} rows in {(len(rows) + ROWS - 1) // ROWS} sheets ({os.path.join(wd, 'sheets')})\n"
-              f"overrides: {ovr if os.path.exists(ovr) else 'none yet'}\n{status}\nfixed-ass: {fixed}")
+              f"overrides: {ovr if os.path.exists(ovr) else 'none yet'}\n"
+              f"{problem or f'updated: {mkv} (default English: {title})'}\nfixed-ass: {fixed}")
+    except BaseException as err:
+        if not isinstance(err, KeyboardInterrupt):
+            open(failed, 'w').write(f'{stamp}\n{err!r}\n')
+        raise
     finally:
-        if tmp and os.path.exists(tmp):
-            os.remove(tmp)
         os.remove(held)
 
 def sheets(mkv, wd, ev, cc_ass):

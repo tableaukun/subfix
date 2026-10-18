@@ -43,12 +43,17 @@ priority). What it prints:
   a subtitle track in that language (the timing reference) are touched, never e.g. an English-language film
 - `no ALL-CAPS signs …: nothing to fix`: subs aren't Netflix-style (e.g. typeset Crunchyroll subs); file untouched
 - `another run is fixing this episode: skipped`: e.g. two mpv windows on one file
+- `failed before on this exact file: skipped`: a run on this file failed (the error is in
+  `work/<episode>/failed`); it isn't retried on every open until the file changes or you pass `--force`
+- `… removed the old fixed track, original English is the default again`: an older version fixed a file the
+  current one doesn't handle, so its track is taken back out
 
 The fixed subs are added to the same file as the default English track, named `<original> (signs fixed vN)`, just
 before the original English track (kept, no longer default). Every other track is kept. With `--strip`, subtitle
 tracks other than English and the original language are removed for good (opt-in). The file is rewritten to a hidden temp copy
-next to it, checked, then swapped in, so a failed or killed run leaves the original as it was. A symlinked episode
-is fixed at its target.
+next to it, checked, then swapped in, so a failed or killed run leaves the original as it was. The file keeps its
+permissions. A symlinked episode is fixed at its target. A hard-linked one (e.g. a seeding copy plus a library copy)
+is split: the path you run it on gets the fix and becomes a separate file.
 
 ## What it fixes
 

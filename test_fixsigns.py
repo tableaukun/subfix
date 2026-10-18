@@ -1,4 +1,5 @@
-# Runs fixsigns.py on tiny made-up scripts, one case per rule. usage: python3 test_fixsigns.py
+# Runs fixsigns.py on tiny made-up scripts, one case per rule, and checks fixep.py's decisions on fake track
+# listings. usage: python3 test_fixsigns.py
 import os, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -166,7 +167,7 @@ def test_ts_rounds_to_whole_centiseconds():
     from fixsigns import ts
     assert ts(119.996) == '0:02:00.00' and ts(3599.999) == '1:00:00.00' and ts(61.234) == '0:01:01.23'
 
-# fixep.py decisions, on track listings shaped like mkvmerge -J output
+# fixep.py decisions, on track listings shaped like mkvmerge -J output (fixep.py is covered here too)
 def trk(i, kind, lang, name='', **flags):
     return {'id': i, 'type': kind, 'properties': {'language': lang, 'track_name': name, **flags}}
 
@@ -210,18 +211,30 @@ def test_original_language_is_the_non_english_audio_with_matching_subs():
     assert f.original_language(kdrama) == 'kor'
     dub_first = [trk(0, 'video', 'und'), trk(1, 'audio', 'eng'), trk(2, 'audio', 'jpn')] + NETFLIX[3:]
     assert f.original_language(dub_first) == 'jpn'
-    keep, _, _ = f.plan_remux(kdrama, kdrama[2], strip=True, lang='kor')
+    keep, _, _, _ = f.plan_remux(kdrama, strip=True, lang='kor')
     assert keep == [2, 3]  # --strip keeps English and the original language
 
 def test_remux_plan_keeps_all_subs_unless_strip_and_replaces_an_earlier_fixed_track():
     f = fixep()
-    keep, order, want = f.plan_remux(NETFLIX, NETFLIX[3])
+    keep, order, english, want = f.plan_remux(NETFLIX)
     assert keep == [3, 4, 5, 6, 7] and order == ['1:0', '1:1', '1:2', '0:0', '1:3', '1:4', '1:5', '1:6', '1:7'] and want == 9
-    keep, order, want = f.plan_remux(NETFLIX, NETFLIX[3], strip=True)  # opt-in: Portuguese dropped
+    assert english == [3, 4]  # both lose the default flag, so the fixed track is the only default English
+    keep, order, english, want = f.plan_remux(NETFLIX, strip=True)  # opt-in: Portuguese dropped
     assert keep == [3, 4, 6, 7] and order == ['1:0', '1:1', '1:2', '0:0', '1:3', '1:4', '1:6', '1:7'] and want == 8
     again = NETFLIX[:3] + [trk(9, 'subtitles', 'eng', 'NF_English (signs fixed v1)')] + NETFLIX[3:]
-    keep, order, want = f.plan_remux(again, NETFLIX[3])
+    keep, order, english, want = f.plan_remux(again)
     assert 9 not in keep and order.count('0:0') == 1 and want == 9
+    forced_first = NETFLIX[:3] + [trk(8, 'subtitles', 'eng', 'NF_English (Forced)', forced_track=True)] + NETFLIX[3:]
+    _, order, _, _ = f.plan_remux(forced_first)
+    assert order.index('0:0') == order.index('1:8') - 1  # before the forced track too, so it's the first English
+
+def test_commentary_audio_is_never_the_original_language():
+    f = fixep()
+    comm = [trk(0, 'video', 'und'), trk(1, 'audio', 'spa', 'Commentary'), trk(2, 'audio', 'jpn'),
+            trk(3, 'subtitles', 'eng', 'English'), trk(4, 'subtitles', 'jpn', 'Japanese'), trk(5, 'subtitles', 'spa', 'Spanish')]
+    assert f.original_language(comm) == 'jpn'
+    dflt = [trk(0, 'video', 'und'), trk(1, 'audio', 'spa'), trk(2, 'audio', 'jpn', default_track=True)] + comm[3:]
+    assert f.original_language(dflt) == 'jpn'  # the default audio wins over an earlier one
 
 def test_stretches_only_where_a_sign_is_lengthened():
     f = fixep()
@@ -236,6 +249,9 @@ def test_lock_is_exclusive_and_taken_over_from_a_dead_run():
         assert held and f.lock(d) is None  # our own pid is alive
         os.remove(held)
         open(os.path.join(d, 'lock'), 'w').write('999999')  # no such process
+        held = f.lock(d)
+        assert held
+        os.utime(held, (0, 0))  # our pid looks alive, but the lock is ancient: a reused pid, take it over
         assert f.lock(d)
 
 if __name__ == '__main__':
