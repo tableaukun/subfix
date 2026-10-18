@@ -20,7 +20,8 @@ FRAMES, ROWS, LEAD = 16, 5, 2.0  # frames per sign strip, strips per sheet, seco
 STALE = 15 * 60  # a lock this old is from a killed run (a run takes ~1 min)
 VERSION = 5  # v1: plain "(signs fixed)", before the second review; v2: signs tracked the drawn text (dialogue
              # chains, shot changes, CC end); v3: signs last their reading time; v4: ...unless the shot changes
-             # first, and a repeated sign doesn't blink; v5: ...or until the dialogue beside it ends
+             # first, and a repeated sign doesn't blink; v5: ...or until the dialogue beside it ends.
+             # Also bump for scope changes (serialized(), pick()): the clean/failed markers carry the version
 
 def fixed_version(n):  # None: not one of ours; 1: unversioned "(signs fixed)"
     m = re.search(r'\(signs fixed(?: v(\d+))?\)$', n)
@@ -160,7 +161,7 @@ def main():
     # CC sound labels are parsed in the Japanese format （…） only; other languages just skip that step
     eng = pick(subs, 'eng', False)
     ref, cc = (pick(subs, lang, False), pick(subs, lang, True) if lang == 'jpn' else None) if lang else (None, None)
-    why = None if eng and lang else 'English-language audio' if eng else 'no full English ASS subtitle track'
+    why = None if eng and lang else 'no non-English audio' if eng else 'no full English ASS subtitle track'
     if why and not ours:
         print(f'{why}: skipped, file untouched')
         return
@@ -227,8 +228,9 @@ def main():
             fixed, *sum((['--default-track-flag', f'{i}:no'] for i in english), []), '-s', ','.join(map(str, keep)), mkv),
             lambda new: len(new) == want and fixed_version(name(next(
                 x for x in new if x['type'] == 'subtitles' and x['properties'].get('language') == 'eng'))) == VERSION)
-        if os.path.exists(failed):
-            os.remove(failed)
+        for f in (failed, clean):  # e.g. a fix that couldn't be swapped in must be tried again next open
+            if os.path.exists(f):
+                os.remove(f)
         title = f"{name(eng) or 'English'} (signs fixed v{VERSION})"
         print(f"workdir: {wd}\nsheets:  {len(rows)} rows in {(len(rows) + ROWS - 1) // ROWS} sheets ({os.path.join(wd, 'sheets')})\n"
               f"overrides: {ovr if os.path.exists(ovr) else 'none yet'}\n"

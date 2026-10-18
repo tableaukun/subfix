@@ -45,6 +45,9 @@ def test_sign_style_and_detection():
     assert ev['BA-BUMP'][2] == 'Sign' and ev['GRADE 2'][2] == 'Sign'  # \an dropped, Sign style is top already
     assert ev['I…'][2] == 'Main'  # one letter is not a sign
     assert ev['ドキッ'][2] == 'Main'  # kana has no case
+    sys.path.insert(0, HERE)
+    from fixsigns import issign
+    assert not issign('[DOOR CLOSES]') and not issign('(SIGHS)') and issign('BA-BUMP (HEART)')  # SDH labels
 
 def test_signs_last_their_reading_time():
     _, ev = fix(ass(('0:00:10.00', '0:00:11.00', 'EEK'),

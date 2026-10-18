@@ -41,7 +41,7 @@ priority). What it prints:
 - `updated: … (default English: … (signs fixed v5))`: fixed
 - `already fixed (v5): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
   overrides). A file fixed by an older version is redone automatically
-- `English-language audio: skipped`: never touched, e.g. an English film whose SDH has `[DOOR CLOSES]`
+- `no non-English audio: skipped`: never touched, e.g. an English film whose SDH has `[DOOR CLOSES]`
 - `… isn't streaming-style …: nothing to fix`: typeset subs (e.g. Crunchyroll), or fewer than 2 caps signs that
   read like labels (several words, no closing `.`/`!`/`?`; a shouted "OK." or "MINATO!" doesn't count); file
   untouched. Checking takes one read of the file (a few seconds) on its first open, then it's remembered until the

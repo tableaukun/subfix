@@ -26,9 +26,9 @@ def ts(v):  # whole centiseconds first: 119.996 must give 0:02:00.00, not 0:01:6
     return f"{cs // 360000}:{cs // 6000 % 60:02d}:{cs // 100 % 60:02d}.{cs % 100:02d}"
 def plain(txt): return re.sub(r'\{[^}]*\}', '', txt).replace('\\N', ' ')
 def reading(txt): return max(READ_MIN, len(plain(txt).strip()) / READ_CPS)  # seconds to read a sign
-def issign(txt):  # ALL-CAPS Latin text; kana/kanji have no case so never count
+def issign(txt):  # ALL-CAPS Latin text; kana/kanji have no case so never count. [DOOR CLOSES] is an SDH label
     letters = [c for c in plain(txt) if c.isalpha()]
-    return len(letters) >= 2 and all(c.isupper() for c in letters)
+    return len(letters) >= 2 and all(c.isupper() for c in letters) and not re.fullmatch(r'\s*[\[(].*[\])]\s*', plain(txt))
 def cues(path):
     return [(t(q[1]), t(q[2]), q[9]) for q in (l.rstrip('\n').split(',', 9) for l in open(path, encoding='utf-8-sig')
                                                if l.startswith('Dialogue:'))]
@@ -37,9 +37,9 @@ def serialized(path):
     # Typeset subs (Crunchyroll, fansubs) put \pos signs over the dialogue. Plain subs can have a caps shout
     # ("OK.", "MINATO!"), so at least 2 signs must read like labels: several words, no closing punctuation
     # ("TRAINING ROOM", "EPISODE 27 ADMIRATION"; 8 of 9 and 23 of 38 in two Netflix episodes)
-    if re.search(r'\\(pos|move)\(', open(path, encoding='utf-8-sig').read()):
-        return False
     ev = cues(path)
+    if any(re.search(r'\\(pos|move)\(', e[2]) for e in ev):
+        return False
     signs, dlg = [e for e in ev if issign(e[2])], [e for e in ev if not issign(e[2])]
     labels = [s for s in signs if ' ' in plain(s[2]).strip() and not re.search(r'[.!?]["\')]*$', plain(s[2]).strip())]
     return len(labels) >= 2 and not any(s[0] < d[1] - SNAP and d[0] < s[1] - SNAP for s in signs for d in dlg)
