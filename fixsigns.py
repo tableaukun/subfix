@@ -8,7 +8,9 @@
 # Signs last long enough to read, like dialogue, not for as long as the drawn text is on screen: at least as listed,
 # READ_MIN at minimum, READ_CPS characters a second. (Tracking the drawn text needed a dialogue-chain heuristic and a
 # shot-change scan; reading time differed by under 0.5 s past a shot change for 5 of 38 signs.)
-# usage: fixsigns.py in.ass out.ass [--ref R] [--cc C] [--overrides O]
+#   --cuts shot-change times found in the stretch a sign is lengthened past its listed end (fixep.py scans only
+#          there): the drawn text has left, so the sign ends at the change instead, never before its listed end
+# usage: fixsigns.py in.ass out.ass [--ref R] [--cc C] [--cuts S] [--overrides O]
 import argparse, re
 READ_MIN, READ_CPS = 1.5, 17  # Netflix-style reading speed; signs sit at the top, so a little slower than 20 cps
 CAP = 5.0  # a CC sound label may start up to this long before its (held-back) sign
@@ -19,6 +21,7 @@ def ts(v):  # whole centiseconds first: 119.996 must give 0:02:00.00, not 0:01:6
     cs = round(v * 100)
     return f"{cs // 360000}:{cs // 6000 % 60:02d}:{cs // 100 % 60:02d}.{cs % 100:02d}"
 def plain(txt): return re.sub(r'\{[^}]*\}', '', txt).replace('\\N', ' ')
+def reading(txt): return max(READ_MIN, len(plain(txt).strip()) / READ_CPS)  # seconds to read a sign
 def issign(txt):  # ALL-CAPS Latin text; kana/kanji have no case so never count
     letters = [c for c in plain(txt) if c.isalpha()]
     return len(letters) >= 2 and all(c.isupper() for c in letters)
@@ -29,7 +32,7 @@ def cues(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('src'); ap.add_argument('dst')
-    ap.add_argument('--ref', '--jpn', dest='ref'); ap.add_argument('--cc'); ap.add_argument('--overrides')
+    ap.add_argument('--ref', '--jpn', dest='ref'); ap.add_argument('--cc'); ap.add_argument('--cuts'); ap.add_argument('--overrides')
     a = ap.parse_args()
     lines = open(a.src, encoding='utf-8-sig').read().splitlines()
     has_sign_style = any(l.startswith('Style: Sign,') for l in lines)
@@ -118,11 +121,19 @@ def main():
                 print(f"sign  {e[3][1]} -> {ts(new)}  {plain(e[3][9])[:40]}")
                 e[0] = new
 
+    cuts = [float(x) for x in open(a.cuts) if x.strip()] if a.cuts else []
     for e in ev:
         if e[2]:  # long enough to read (from its possibly earlier start), never shorter than listed
-            e[1] = max(e[1], e[0] + max(READ_MIN, len(plain(e[3][9]).strip()) / READ_CPS))
+            listed_end = t(e[3][2])
+            e[1] = max(e[1], e[0] + reading(e[3][9]))
+            c = [x for x in cuts if max(e[0], listed_end - ADJ) < x < e[1]]  # shot changed in the added stretch
+            if c:
+                e[1] = max(listed_end, min(c))
 
     signs = sorted((e for e in ev if e[2]), key=lambda e: e[0])
+    for x, y in zip(signs, signs[1:]):  # the same sign again moments later (a heartbeat): one sign, no blink
+        if plain(x[3][9]).strip() == plain(y[3][9]).strip() and 0 < y[0] - x[1] < READ_MIN:
+            x[1] = y[0]
     for x, y in zip(signs, signs[1:]):
         if y[0] > x[0]: x[1] = min(x[1], y[0])  # don't stack two signs
     for s in signs:

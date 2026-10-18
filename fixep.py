@@ -11,13 +11,15 @@
 #   a Western film whose SDH has [DOOR CLOSES], is left alone
 #   last line on success: "fixed-ass: <path>" (read by mpv/subfix.lua)
 import sys, os, re, json, time, tempfile, subprocess
+from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fixsigns import t, issign
+from fixsigns import t, issign, reading, ADJ
 
 FRAMES, ROWS, LEAD = 16, 5, 2.0  # frames per sign strip, strips per sheet, seconds before the previous line
 STALE = 15 * 60  # a lock this old is from a killed run (a run takes ~1 min)
-VERSION = 3  # v1: plain "(signs fixed)", before the second review; v2: signs tracked the drawn text (dialogue
-             # chains, shot changes, CC end); v3: signs last their reading time
+VERSION = 4  # v1: plain "(signs fixed)", before the second review; v2: signs tracked the drawn text (dialogue
+             # chains, shot changes, CC end); v3: signs last their reading time; v4: ...unless the shot changes
+             # first, and a repeated sign doesn't blink
 
 def fixed_version(n):  # None: not one of ours; 1: unversioned "(signs fixed)"
     m = re.search(r'\(signs fixed(?: v(\d+))?\)$', n)
@@ -90,6 +92,23 @@ def lock(wd):
                 return None
             os.remove(path)
 
+def stretches(ev):
+    # where a sign gets lengthened past its listed end to its reading time: only there can a shot change cut it.
+    # Under 0.2 s (5 frames) past a shot change isn't noticeable, so not worth a scan: each one decodes from the
+    # previous keyframe (~4 s back). Starts 1 s early so ffmpeg's scene score has frames to compare against
+    return [(t(e) - ADJ - 1, t(s) + reading(txt) + 0.05) for s, txt, e in ev
+            if issign(txt) and t(s) + reading(txt) >= t(e) + 0.2]
+
+def shot_changes(mkv, wins):
+    def scan(w):
+        a, b = max(0, w[0]), w[1]
+        log = subprocess.run(['ffmpeg', '-nostdin', '-ss', f'{a:.3f}', '-t', f'{b - a:.3f}', '-i', mkv, '-an', '-sn',
+                              '-vf', "scale=320:-2,select='gt(scene,0.25)',showinfo", '-f', 'null', '-'],
+                             check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL).stderr
+        return [a + float(x) for x in re.findall(r'pts_time:([0-9.]+)', log)]  # pts restart at 0 after -ss
+    with ThreadPoolExecutor(max(1, (os.cpu_count() or 2) // 2)) as pool:
+        return sorted(c for found in pool.map(scan, wins) for c in found)
+
 def main():
     if hasattr(os, 'nice'):
         os.nice(10)  # mpv may be playing this very file: let playback have the CPU first (children inherit it)
@@ -140,8 +159,11 @@ def main():
             print(f"no ALL-CAPS signs in '{name(eng) or 'English'}': nothing to fix, no output written")
             return
 
+        cuts = os.path.join(wd, 'cuts.txt')
+        open(cuts, 'w').write(''.join(f'{c:.3f}\n' for c in shot_changes(mkv, stretches(ev))))
+
         ovr = os.path.join(here, 'overrides', slug + '.txt')
-        args = [eng_ass, fixed, '--ref', ref_ass] + (['--cc', cc_ass] if cc else []) \
+        args = [eng_ass, fixed, '--ref', ref_ass, '--cuts', cuts] + (['--cc', cc_ass] if cc else []) \
             + (['--overrides', ovr] if os.path.exists(ovr) else [])
         print(run(sys.executable, '-I', os.path.join(here, 'fixsigns.py'), *args), end='')
 

@@ -17,12 +17,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 def ass(*events):
     return HEAD + ''.join(f"Dialogue: 0,{s},{e},Main,,0,0,0,,{txt}\n" for s, e, txt in events)
 
-def fix(eng, jpn=None, overrides=None, cc=None, raw=False):
+def fix(eng, jpn=None, overrides=None, cc=None, cuts=None, raw=False):
     with tempfile.TemporaryDirectory() as d:
         src, out = os.path.join(d, 'eng'), os.path.join(d, 'out')
         open(src, 'w', encoding='utf-8').write(eng)
         args = [src, out]
-        for flag, body in (('--ref', jpn), ('--overrides', overrides), ('--cc', cc)):
+        for flag, body in (('--ref', jpn), ('--overrides', overrides), ('--cc', cc), ('--cuts', cuts)):
             if body is not None:
                 path = os.path.join(d, flag[2:])
                 open(path, 'w', encoding='utf-8').write(body)
@@ -53,6 +53,23 @@ def test_signs_last_their_reading_time():
     assert ev['EEK'][:2] == ('0:00:10.00', '0:00:11.50')  # 1.5 s minimum, not stretched over the dialogue
     assert ev['MOMOKA KURIKI\\NVOICE CALL - VIDEO CALL - CHAT'][1] == '0:00:32.59'  # 44 characters at 17 cps
     assert ev['EPISODE 17\\NTRUE FEELINGS'][:2] == ('0:00:40.00', '0:00:44.00')  # never shorter than listed
+
+def test_lengthened_sign_ends_at_a_shot_change_in_the_added_stretch():
+    # EEK at 5:41: listed 1.0 s ending 0.09 s before a cut; 1.5 s would show it 0.4 s into the next shot
+    _, ev = fix(ass(('0:00:10.00', '0:00:11.00', 'EEK'), ('0:00:20.00', '0:00:21.00', 'FLIP'),
+                    ('0:00:30.00', '0:00:31.00', 'HUH?')),
+                cuts='10.50\n11.09\n21.30\n')
+    assert ev['EEK'][:2] == ('0:00:10.00', '0:00:11.09')  # cut in the added stretch (one inside the listed span ignored)
+    assert ev['FLIP'][:2] == ('0:00:20.00', '0:00:21.30')
+    assert ev['HUH?'][:2] == ('0:00:30.00', '0:00:31.50')  # no cut: full reading time
+
+def test_repeated_sign_does_not_blink():
+    # BA-BUMP 18:20 then 18:22.60: 0.76 s gap between two reading-time signs
+    out = fix(ass(('0:00:50.00', '0:00:51.00', 'BA-BUMP'), ('0:00:52.26', '0:00:53.26', '{\\an8}BA-BUMP'),
+                  ('0:00:58.00', '0:00:59.00', 'BA-BUMP')), raw=True)
+    lines = [l.split(',', 9) for l in out if l.startswith('Dialogue:')]
+    assert [(l[1], l[2]) for l in lines] == [('0:00:50.00', '0:00:52.26'), ('0:00:52.26', '0:00:53.76'),
+                                             ('0:00:58.00', '0:00:59.50')]  # far apart: left alone
 
 def test_delayed_dialogue_snaps_to_japanese_start():
     _, ev = fix(ass(('0:00:10.00', '0:00:11.00', 'IRRITATED'),
@@ -205,6 +222,12 @@ def test_remux_plan_keeps_all_subs_unless_strip_and_replaces_an_earlier_fixed_tr
     again = NETFLIX[:3] + [trk(9, 'subtitles', 'eng', 'NF_English (signs fixed v1)')] + NETFLIX[3:]
     keep, order, want = f.plan_remux(again, NETFLIX[3])
     assert 9 not in keep and order.count('0:0') == 1 and want == 9
+
+def test_stretches_only_where_a_sign_is_lengthened():
+    f = fixep()
+    ev = [('0:00:10.00', 'EEK', '0:00:11.00'), ('0:00:20.00', 'EPISODE 17', '0:00:24.00'),
+          ('0:00:30.00', 'line', '0:00:31.00'), ('0:00:40.00', 'HUH?', '0:00:41.41')]  # HUH?: only 0.09 s added
+    assert [tuple(round(x, 2) for x in w) for w in f.stretches(ev)] == [(9.85, 11.55)]
 
 def test_lock_is_exclusive_and_taken_over_from_a_dead_run():
     f = fixep()

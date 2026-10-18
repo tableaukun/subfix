@@ -33,11 +33,11 @@ for f in /path/to/season/*.mkv; do python3 fixep.py "$f"; done             # mac
 Get-ChildItem C:\path\to\season\*.mkv | % { python fixep.py $_.FullName }  # Windows PowerShell
 ```
 
-Each file takes about 5-10 s (mostly the contact sheets; longer while mpv is playing it, as it runs at low
+Each file takes about 5-15 s (the shot-change check on lengthened signs and the contact sheets; longer while mpv is playing it, as it runs at low
 priority). What it prints:
 
-- `updated: … (default English: … (signs fixed v3))`: fixed
-- `already fixed (v3): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
+- `updated: … (default English: … (signs fixed v4))`: fixed
+- `already fixed (v4): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
   overrides). A file fixed by an older version is redone automatically
 - `not a non-English-audio release with original-language subs: skipped`: only shows with non-English audio and
   a subtitle track in that language (the timing reference) are touched, never e.g. an English-language film
@@ -55,7 +55,9 @@ is fixed at its target.
 - signs get their own top-of-screen `Sign` style. Dialogue Netflix lifted to the top (to keep clear of drawn text)
   keeps the top line and the sign sits under it
 - signs last long enough to read, like dialogue: at least as long as Netflix listed them, 1.5 s minimum, about 17
-  characters a second. They don't try to match how long the drawn text stays on screen
+  characters a second. When that lengthens a sign, the added stretch is checked for a shot change: if the shot
+  changes there, the drawn text has gone, so the sign ends at the change. The same sign repeated moments later
+  (a heartbeat) is joined up instead of blinking
 - dialogue start/end times are restored from the original-language subtitle track, which is timed to the speech
   (for anime, the first Japanese track that isn't CC/SDH)
 - sound-effect signs start with their sound in the Japanese CC track's sound labels, e.g. `（心臓の鼓動）` for
@@ -82,7 +84,7 @@ then rerun with `--force`. Without overrides, everything else is still fixed.
 ## mpv
 
 `mpv/subfix.lua` runs `fixep.py` in the background whenever an MKV opens, then loads and selects the fixed English
-subs (usually 5-10 s in). Files already fixed by the current version are skipped in a fraction of a second, so files
+subs (usually 5-15 s in). Files already fixed by the current version are skipped in a fraction of a second, so files
 fixed beforehand start straight away; files fixed by an older version are redone. macOS: Homebrew is found even
 when mpv starts from Finder. Add `strip=yes` to `script-opts/subfix.conf` for the `--strip` behaviour.
 
