@@ -146,6 +146,14 @@ def test_sign_stays_top_when_bottom_dialogue_also_overlaps():
                     ('0:02:03.00', '0:02:05.00', '{\\an8}top line')))
     assert 'BA-BUMP' in ev
 
+def test_script_without_signs_comes_back_unchanged():
+    # typeset (Crunchyroll-style) subs: no caps signs, overlaps allowed, event order deliberate
+    src = ass(('0:00:05.00', '0:00:07.00', "Who are you?"),
+              ('0:00:04.00', '0:00:05.00', "Let's go."),
+              ('0:00:04.50', '0:00:09.00', '{\\an8\\pos(320,20)}Tennyo Island'))
+    lines = fix(src, raw=True)
+    assert [l for l in lines if l.strip()] == [l for l in src.splitlines() if l.strip()]
+
 if __name__ == '__main__':
     tests = [f for n, f in sorted(globals().items()) if n.startswith('test_')]
     for f in tests:

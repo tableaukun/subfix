@@ -27,6 +27,7 @@ def cues(path):
 
 lines = open(a.src, encoding='utf-8-sig').read().splitlines()
 has_sign_style = any(l.startswith('Style: Sign,') for l in lines)
+added = False
 head, ev = [], []  # ev: [start, end, is_sign, fields, fixed_by_cc]
 dlg_size = dlg_mv = None  # first non-Sign style: dialogue font size and vertical margin
 for l in lines:
@@ -48,7 +49,7 @@ for l in lines:
             f = l.split(',')  # base Sign on the first style, whatever it is called: 85% size, top-center
             f[0], f[2], f[18] = 'Style: Sign', str(round(float(f[2]) * 0.85)), '8'
             head.append(','.join(f))
-            has_sign_style = True
+            has_sign_style = added = True
 
 if a.jpn:
     jp = [(s, e) for s, e, _ in cues(a.jpn)]
@@ -139,10 +140,12 @@ for s in signs:
     if top and dlg_size:
         n = max(e[3][9].count('\\N') + 1 for e in top)
         s[3][7] = str(dlg_mv + round(n * dlg_size * 1.15))  # ponytail: assumes lines don't auto-wrap
-ev.sort(key=lambda e: e[0])
 for e in ev:
     e[3][1], e[3][2] = ts(e[0]), ts(e[1])
 
+if added and not any(e[2] for e in ev):
+    head = [l for l in head if not l.startswith('Style: Sign,')]  # nothing to fix: leave the script as it was
+# events keep their input order: it decides which line a renderer stacks on top when two overlap
 res = []
 for l in (l for l in head if l.strip()):  # rebuild with blank lines before sections
     if l.startswith('[') and res: res.append('')

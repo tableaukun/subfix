@@ -30,6 +30,14 @@ if not eng: sys.exit('no full English subtitle track found')
 eng_ass, jpn_ass, cc_ass, fixed = (os.path.join(wd, n) for n in ('eng.ass', 'jpn.ass', 'jpncc.ass', 'eng.fixed.ass'))
 run('mkvextract', mkv, 'tracks', *(f"{x['id']}:{p}" for x, p in ((eng, eng_ass), (jpn, jpn_ass), (jcc, cc_ass)) if x))
 
+ev = [(q[1], re.sub(r'\{[^}]*\}', '', q[9]).replace('\\N', ' ').strip(), q[2])
+      for q in (l.split(',', 9) for l in open(eng_ass, encoding='utf-8-sig') if l.startswith('Dialogue:'))]
+sign = lambda s: (lambda L: len(L) >= 2 and all(c.isupper() for c in L))([c for c in s if c.isalpha()])  # as fixsigns.issign
+if not any(sign(txt) for _, txt, _ in ev):
+    # every fix hangs off an ALL-CAPS sign; none means the subs weren't serialized (e.g. typeset Crunchyroll subs)
+    print(f"no ALL-CAPS signs in '{eng['properties'].get('track_name') or 'English'}': nothing to fix, no output written")
+    sys.exit(0)
+
 cuts = os.path.join(wd, 'cuts.txt')  # shot changes, cached: a full decode takes ~30s
 if not os.path.exists(cuts):
     log = subprocess.run(['ffmpeg', '-i', mkv, '-an', '-sn', '-vf', "scale=320:-2,select='gt(scene,0.25)',showinfo",
@@ -46,9 +54,6 @@ print(run(sys.executable, '-I', os.path.join(here, 'fixsigns.py'), *args), end='
 # - shout?      a CC line with a speaker label, e.g. （ミナト）え？, and no sound label starts with it, so the caps
 #               line may be a translated shout rather than drawn text: frames across the sign itself.
 #               (overlap alone flagged 12/38 signs here, all drawn; same start flags 1)
-ev = [(q[1], re.sub(r'\{[^}]*\}', '', q[9]).replace('\\N', ' ').strip(), q[2])
-      for q in (l.split(',', 9) for l in open(eng_ass, encoding='utf-8-sig') if l.startswith('Dialogue:'))]
-sign = lambda s: (lambda L: len(L) >= 2 and all(c.isupper() for c in L))([c for c in s if c.isalpha()])  # as fixsigns.issign
 rows = [(max(0, t(p[0]) - LEAD), t(c[0]) + 0.2, c[0], c[1], 'held back?')
         for p, c in zip(ev, ev[1:]) if sign(c[1]) and t(c[0]) - t(p[2]) < 0.15]
 if jcc:
