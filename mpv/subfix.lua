@@ -43,7 +43,12 @@ end
 
 mp.register_event('file-loaded', function()
     local opened = mp.get_property('path')
-    if not opened or opened:match('^%a%a+://') or not opened:lower():match('%.mkv$') then return end
+    if not opened or not opened:lower():match('%.mkv$') then return end
+    if opened:match('^%a%a+://') then  -- smb://, http:// etc.: no file to rewrite. A mounted share works
+        mp.msg.info('not a local file or mounted share, skipped: ' .. opened)
+        mp.osd_message('subfix: streamed file, subs not checked (mount the share to fix it)', 4)
+        return
+    end
     -- no track-name check here: fixep.py compares the fixed track's version with its own and returns at once
     -- (one mkvmerge -J) when the file is current, so bumping VERSION there redoes older files on their next open
     local absolute = opened:match('^/') or opened:match('^%a:[/\\]') or opened:match('^\\\\')
@@ -54,12 +59,23 @@ mp.register_event('file-loaded', function()
         return
     end
     mp.msg.info('checking subs in the background (' .. FIXEP .. ')')
+    local done = false
+    -- a current or clean file answers in well under a second; say so only when real work is under way
+    mp.add_timeout(2, function()
+        if not done and mp.get_property('path') == opened then
+            mp.msg.info('fixing subs (5-15 s, longer over a network)')
+            mp.osd_message('subfix: fixing subs in the background...', 3)
+        end
+    end)
     mp.command_native_async({
         name = 'subprocess', playback_only = false, capture_stdout = true, capture_stderr = true,
         env = environment(), args = {opts.python, '-I', FIXEP, abs, opts.strip and '--strip' or nil},
     }, function(ok, res)
+        done = true
         if not ok or res.status ~= 0 then
-            mp.msg.warn('fixep.py failed: ' .. ((res and (res.stderr ~= '' and res.stderr or res.error_string)) or '?'))
+            local err = (res and (res.stderr ~= '' and res.stderr or res.error_string)) or '?'
+            mp.msg.warn('fixep.py failed: ' .. err)
+            mp.osd_message('subfix failed: ' .. (err:gsub('%s+$', ''):match('[^\n]*$')), 6)
             return
         end
         local ass = res.stdout:match('fixed%-ass: ([^\r\n]+)')

@@ -107,7 +107,8 @@ except `overrides.txt` is rebuilt on each run, so keep that file if you clear it
 `mpv/subfix.lua` runs `fixep.py` in the background whenever an MKV opens, then loads and selects the fixed English
 subs (usually 5-15 s in). Files already fixed by the current version are skipped in a fraction of a second, so files
 fixed beforehand start straight away; files fixed by an older version are redone. macOS: Homebrew is found even
-when mpv starts from Finder. Add `strip=yes` to `script-opts/subfix.conf` for the `--strip` behaviour.
+when mpv starts from Finder. It shows on screen when it is fixing (after 2 s), loaded, failed, or skipped a
+streamed URL. A file on another computer works when that folder is mounted (SMB/NFS/sshfs), not opened as a URL. Add `strip=yes` to `script-opts/subfix.conf` for the `--strip` behaviour.
 
 From the `subfix` folder:
 
