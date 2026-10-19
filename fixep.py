@@ -20,9 +20,10 @@ from fixsigns import t, issign, serialized
 
 FRAMES, ROWS, LEAD = 16, 5, 2.0  # frames per sign strip, strips per sheet, seconds before the previous line
 STALE = 15 * 60  # a lock this old is from a killed run (a run takes ~1 min)
-VERSION = 5  # v1: plain "(signs fixed)", before the second review; v2: signs tracked the drawn text (dialogue
+VERSION = 6  # v1: plain "(signs fixed)", before the second review; v2: signs tracked the drawn text (dialogue
              # chains, shot changes, CC end); v3: signs last their reading time; v4: ...unless the shot changes
-             # first, and a repeated sign doesn't blink; v5: ...or until the dialogue beside it ends.
+             # first, and a repeated sign doesn't blink; v5: ...or until the dialogue beside it ends;
+             # v6: a CC sound moves a sign earlier only past dialogue that held it back.
              # Also bump for scope changes (serialized(), pick()): the clean/failed markers carry the version
 
 def fixed_version(n):  # None: not one of ours; 1: unversioned "(signs fixed)"

@@ -47,8 +47,8 @@ Get-ChildItem C:\path\to\season\*.mkv | % { python fixep.py $_.FullName }  # Win
 Each file takes about 5-15 s (the shot-change check on lengthened signs and the contact sheets; longer while mpv is playing it, as it runs at low
 priority). What it prints:
 
-- `updated: … (default English: … (signs fixed v5))`: fixed
-- `already fixed (v5): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
+- `updated: … (default English: … (signs fixed v6))`: fixed
+- `already fixed (v6): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
   overrides). A file fixed by an older version is redone automatically
 - `no non-English audio: skipped`: never touched, e.g. an English film whose SDH has `[DOOR CLOSES]`
 - `… isn't streaming-style …: nothing to fix`: typeset subs (e.g. Crunchyroll), or fewer than 2 caps signs that

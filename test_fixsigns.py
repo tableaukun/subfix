@@ -130,16 +130,23 @@ def test_sign_sits_below_top_dialogue():
 def test_cc_sound_label_times_sign_but_speaker_name_does_not():
     cc = ass(('0:01:10.00', '0:01:12.60', '（心臓の鼓動）\\N（湊）あれ？'),
              ('0:01:20.00', '0:01:22.00', '（大地）\\Nこっち'))
-    _, ev = fix(ass(('0:01:11.50', '0:01:12.00', 'BA-BUMP'),
+    _, ev = fix(ass(('0:01:09.00', '0:01:11.42', 'held it back'),
+                    ('0:01:11.50', '0:01:12.00', 'BA-BUMP'),
                     ('0:01:12.08', '0:01:15.00', 'dialogue'),
                     ('0:01:20.50', '0:01:21.00', 'OVER HERE'),
                     ('0:01:21.08', '0:01:22.00', 'more dialogue')), cc=cc)
     assert ev['BA-BUMP'][:2] == ('0:01:10.00', '0:01:12.00')  # starts with the sound, listed end kept
     assert ev['OVER HERE'][:2] == ('0:01:20.50', '0:01:22.00')  # speaker label ignored: listed start, 1.5 s
 
+def test_cc_sound_moves_a_sign_only_past_dialogue_that_held_it_back():
+    # Ao no Hako S2 03 9:06: the phone alarm rings over the bedroom; the sign is the phone screen, shown at 9:10
+    cc = ass(('0:09:06.46', '0:09:12.46', '（携帯電話のアラーム）'))
+    _, ev = fix(ass(('0:09:00.00', '0:09:03.00', 'earlier talk'), ('0:09:10.46', '0:09:12.26', '5:30 ALARM\\NSTOP - SNOOZE')), cc=cc)
+    assert ev['5:30 ALARM\\NSTOP - SNOOZE'][0] == '0:09:10.46'
+
 def test_cc_sound_used_for_one_sign_only():
     cc = ass(('0:01:30.00', '0:01:35.00', '（うなり声）'))
-    _, ev = fix(ass(('0:01:30.00', '0:01:31.00', 'URGH'), ('0:01:34.00', '0:01:34.50', 'RUMBLE')), cc=cc)
+    _, ev = fix(ass(('0:01:30.00', '0:01:31.00', 'URGH'), ('0:01:31.00', '0:01:33.95', 'talk'), ('0:01:34.00', '0:01:34.50', 'RUMBLE')), cc=cc)
     assert ev['URGH'][:2] == ('0:01:30.00', '0:01:31.50')
     assert ev['RUMBLE'][0] == '0:01:34.00'  # the growl already went to URGH
 

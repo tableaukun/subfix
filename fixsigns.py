@@ -121,7 +121,10 @@ def main():
             m = [k for k, (s, x, _) in enumerate(snd) if k not in used and s <= e[0] + SNAP and x > e[0] and s >= e[0] - CAP]
             if m:
                 k = m[0]; used.add(k)
-                if snd[k][0] < e[0]:
+                # only dialogue holds a sign back: with none in between, the listed start is the real one (a phone
+                # alarm heard over the bedroom before the cut to the phone's screen)
+                held = any(d[0] < e[0] - SNAP and d[1] > snd[k][0] + SNAP for d in ev if not d[2])
+                if snd[k][0] < e[0] and held:
                     print(f"cc    {ts(e[0])} -> {ts(snd[k][0])}  {plain(e[3][9])[:24]} = {snd[k][2]}")
                     e[0] = snd[k][0]
 
