@@ -128,6 +128,25 @@ Set-Content "$env:APPDATA\mpv\script-opts\subfix.conf" "fixep=$PWD\fixep.py"
 
 Windows can't replace a file that's playing, so there the fix loads for that session but isn't embedded.
 
+## Fixing when a download finishes (qBittorrent)
+
+Played from another computer over a network share, the mpv script would read and rewrite the whole file across
+the network. Instead, let the torrent client fix each episode once, when it finishes, on the computer the files
+live on. Anything opening it afterwards, over SMB or not, gets the fixed track as the default English, with no
+script needed there (remove `subfix.lua` on that computer, or it repeats the check over the network on every open).
+
+qBittorrent: Options → Downloads → **Run external program** → *Run on torrent finished*, with the line this
+prints from the `subfix` folder:
+
+```
+echo "\"$(python3 -c 'import sys; print(sys.executable)')\" -I \"$PWD/fixep.py\" \"%F\" --log"
+```
+
+`%F` is the episode, or the folder of a season pack (every MKV in it is fixed). `--log` appends the results to
+`work/fixep.log`. macOS may ask once whether qBittorrent can access the folder `subfix` is in. The file is
+rewritten in place, so a torrent that keeps seeding would send changed data: set it to stop seeding when it
+finishes, or leave this off. Other clients with a "run on completion" option (Transmission, Deluge) work the same.
+
 ## Versions
 
 `VERSION` in `fixep.py` is stamped into the fixed track's name. Bump it whenever a change would alter the output;

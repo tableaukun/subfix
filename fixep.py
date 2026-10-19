@@ -3,6 +3,8 @@
 # default English (original English and every other track kept; --strip keeps only English + original-language subs).
 # Sign start overrides (picked from the sheets) go in <workroot>/<slug>/overrides.txt; rerun to apply them.
 # usage: fixep.py episode.mkv [workroot] [--force] [--strip]   (default workroot: ./work next to this script)
+#        fixep.py folder   fixes every MKV in it and below (e.g. qBittorrent's "run on torrent finished": %F)
+#   --log  appends the output to work/fixep.log, for runs nobody watches
 #   the fixed track is named "<original> (signs fixed vN)"; a file whose fixed track is already at VERSION is
 #   skipped unless --force (e.g. after editing its overrides). Bump VERSION whenever the output would change,
 #   so every older file is redone on its next run or mpv open
@@ -138,12 +140,32 @@ def rewrite(mkv, make, check):
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
-        sys.exit(__doc__ or 'usage: fixep.py episode.mkv [workroot] [--force] [--strip]')
+        sys.exit(__doc__ or 'usage: fixep.py episode.mkv|folder [workroot] [--force] [--strip] [--log]')
+    if '--log' in sys.argv:  # nobody reads the output (qBittorrent): append it, and the children's, to work/fixep.log
+        here = os.path.dirname(os.path.abspath(__file__))
+        os.makedirs(os.path.join(here, 'work'), exist_ok=True)
+        fd = os.open(os.path.join(here, 'work', 'fixep.log'), os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+        os.dup2(fd, 1), os.dup2(fd, 2)
+        print(time.strftime('%F %T'), sys.argv[1], flush=True)
+    for d in ('/opt/homebrew/bin', '/usr/local/bin'):  # started from a macOS app (qBittorrent, Finder): no Homebrew
+        if os.path.isdir(d) and d not in os.environ.get('PATH', '').split(os.pathsep):
+            os.environ['PATH'] = os.environ.get('PATH', '') + os.pathsep + d
+    if os.path.isdir(sys.argv[1]):  # a season pack: each episode on its own, one failure doesn't stop the rest
+        for dp, _, fs in sorted(os.walk(sys.argv[1])):
+            for f in sorted(fs):
+                if f.lower().endswith('.mkv') and not f.startswith('.'):
+                    print(f'== {f}', flush=True)
+                    subprocess.run([sys.executable, '-I', os.path.abspath(__file__), os.path.join(dp, f),
+                                    *(x for x in sys.argv[2:] if x != '--log')], stdin=subprocess.DEVNULL)  # fds inherited
+        return
+    if not sys.argv[1].lower().endswith('.mkv'):  # e.g. an .mp4 torrent: remuxing would leave an MKV named .mp4
+        print(f'not an MKV: skipped, file untouched')
+        return
     if hasattr(os, 'nice'):
         os.nice(10)  # mpv may be playing this very file: let playback have the CPU first (children inherit it)
     here = os.path.dirname(os.path.abspath(__file__))
     force, strip = '--force' in sys.argv, '--strip' in sys.argv
-    argv = [x for x in sys.argv[1:] if x not in ('--force', '--strip')]
+    argv = [x for x in sys.argv[1:] if x not in ('--force', '--strip', '--log')]
     mkv = os.path.realpath(argv[0])  # a symlinked episode: rewrite the real file, keep the link
     root = argv[1] if len(argv) > 1 else os.path.join(here, 'work')
     stem = os.path.splitext(os.path.basename(mkv))[0]
