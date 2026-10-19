@@ -18,12 +18,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 def ass(*events):
     return HEAD + ''.join(f"Dialogue: 0,{s},{e},Main,,0,0,0,,{txt}\n" for s, e, txt in events)
 
-def fix(eng, jpn=None, overrides=None, cc=None, cuts=None, raw=False):
+def fix(eng, jpn=None, overrides=None, cc=None, cuts=None, auto=None, raw=False):
     with tempfile.TemporaryDirectory() as d:
         src, out = os.path.join(d, 'eng'), os.path.join(d, 'out')
         open(src, 'w', encoding='utf-8').write(eng)
         args = [src, out]
-        for flag, body in (('--ref', jpn), ('--overrides', overrides), ('--cc', cc), ('--cuts', cuts)):
+        for flag, body in (('--ref', jpn), ('--overrides', overrides), ('--cc', cc), ('--cuts', cuts), ('--auto', auto)):
             if body is not None:
                 path = os.path.join(d, flag[2:])
                 open(path, 'w', encoding='utf-8').write(body)
@@ -143,6 +143,45 @@ def test_cc_sound_moves_a_sign_only_past_dialogue_that_held_it_back():
     cc = ass(('0:09:06.46', '0:09:12.46', '（携帯電話のアラーム）'))
     _, ev = fix(ass(('0:09:00.00', '0:09:03.00', 'earlier talk'), ('0:09:10.46', '0:09:12.26', '5:30 ALARM\\NSTOP - SNOOZE')), cc=cc)
     assert ev['5:30 ALARM\\NSTOP - SNOOZE'][0] == '0:09:10.46'
+
+def test_auto_start_applies_unless_cc_moved_it_or_it_would_crowd_the_previous_sign():
+    eng = ass(('0:00:08.00', '0:00:09.00', 'GRADE 2'), ('0:00:09.00', '0:00:11.92', 'held it back'),
+              ('0:00:12.00', '0:00:13.00', 'CERTAIN VICTORY'), ('0:00:20.00', '0:00:21.92', 'more talk'),
+              ('0:00:22.00', '0:00:23.00', 'AWARD'))
+    auto = '0:00:12.00 0:00:10.00\n0:00:22.00 0:00:20.50\n0:00:08.00 0:00:07.00\n'
+    _, ev = fix(eng, auto=auto)
+    assert ev['CERTAIN VICTORY'][0] == '0:00:10.00' and ev['AWARD'][0] == '0:00:20.50'
+    assert ev['GRADE 2'][0] == '0:00:07.00'
+    _, ev = fix(eng, auto='0:00:12.00 0:00:08.50\n')  # GRADE 2 (from 8.00) needs 1.5 s: left where it was
+    assert ev['CERTAIN VICTORY'][0] == '0:00:12.00'
+    cc = ass(('0:00:21.00', '0:00:23.00', '（拍手）'))
+    _, ev = fix(eng, auto=auto, cc=cc)
+    assert ev['AWARD'][0] == '0:00:21.00'  # the CC sound already placed it
+    _, ev = fix(eng, auto=auto, overrides='0:00:22.00 0:00:21.50\n')
+    assert ev['AWARD'][0] == '0:00:21.50'  # hand-picked wins
+
+# heldback.onset() on synthetic grey frames: no video needed
+def frame(bg=60, boxes=(), noise=0):
+    sys.path.insert(0, HERE)
+    import heldback as hb
+    f = bytearray([bg]) * (hb.W * hb.H)
+    for x0, y0, x1, y1, v in boxes:
+        for y in range(y0, y1):
+            f[y * hb.W + x0:y * hb.W + x1] = bytes([v]) * (x1 - x0)
+    return bytes(f)
+TEXT = (20, 20, 120, 40, 230)  # a strip of drawn text, ~6% of the frame
+
+def test_heldback_moves_a_sign_only_to_a_clean_shot_start():
+    from heldback import onset
+    seq = lambda parts: [f for f, n in parts for _ in range(n)]
+    assert onset(seq([(frame(60), 30), (frame(120, [TEXT]), 60)]), 89)[0] == 30  # cut into a static shot with text
+    assert onset(seq([(frame(60), 30), (frame(120), 25), (frame(120, [TEXT]), 35)]), 89)[0] is None  # pops in later
+    assert onset(seq([(frame(60), 85), (frame(120, [TEXT]), 5)]), 89)[0] is None  # shot starts at the listed start
+    assert onset(seq([(frame(120, [TEXT]), 90)]), 89)[0] is None  # no cut in the window
+    moving = [frame(120, [TEXT, (0, 60 + k // 2, 240, 100 + k // 2, 10)]) for k in range(60)]
+    assert onset(seq([(frame(60), 30)]) + moving, 89)[0] is None  # big motion after the cut
+    mouth = [frame(120, [TEXT, (150, 100, 158, 104 + k % 3, 0)]) for k in range(60)]
+    assert onset(seq([(frame(60), 30)]) + mouth, 89)[0] == 30  # a mouth-sized flicker is fine
 
 def test_cc_sound_used_for_one_sign_only():
     cc = ass(('0:01:30.00', '0:01:35.00', '（うなり声）'))

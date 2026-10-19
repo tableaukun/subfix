@@ -3,8 +3,10 @@
 #   --ref  subtitle track in the audio's language (Japanese for anime), timed to the speech: restores dialogue
 #          that was delayed/cut short by a sign. --jpn is the old name
 #   --cc   Japanese CC track: lines entirely in （…） are sound labels; they give the real start of SFX signs
+#   --auto       the same, found by heldback.py (fixep.py): only for signs the CC step left alone, and never
+#                cutting the previous sign below its reading time
 #   --overrides  lines of "old_start new_start" (ASS times) for signs held back behind dialogue, picked by eye
-#                from contact sheets (scene-cut detection got only 3 of 7 right)
+#                from contact sheets (what heldback.py can't find); these win over --auto
 # Signs last long enough to read, like dialogue, not for as long as the drawn text is on screen: at least as listed,
 # READ_MIN at minimum, READ_CPS characters a second. (Tracking the drawn text needed a dialogue-chain heuristic and a
 # shot-change scan; reading time differed by under 0.5 s past a shot change for 5 of 38 signs.)
@@ -14,7 +16,7 @@
 #   --cuts shot-change times found in those stretches: the drawn text has left, so the sign ends at the change
 #          instead, never before its listed end
 # fixep.py only runs this on serialized subs (serialized()): typeset ones, e.g. Crunchyroll's, have \pos signs.
-# usage: fixsigns.py in.ass out.ass [--ref R] [--cc C] [--stretches W] [--cuts S] [--overrides O]
+# usage: fixsigns.py in.ass out.ass [--ref R] [--cc C] [--stretches W] [--cuts S] [--auto A] [--overrides O]
 import argparse, re
 READ_MIN, READ_CPS = 1.5, 17  # Netflix-style reading speed; signs sit at the top, so a little slower than 20 cps
 CAP = 5.0  # a CC sound label may start up to this long before its (held-back) sign
@@ -47,7 +49,7 @@ def serialized(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('src'); ap.add_argument('dst')
-    ap.add_argument('--ref', '--jpn', dest='ref'); ap.add_argument('--cc'); ap.add_argument('--overrides')
+    ap.add_argument('--ref', '--jpn', dest='ref'); ap.add_argument('--cc'); ap.add_argument('--auto'); ap.add_argument('--overrides')
     ap.add_argument('--cuts'); ap.add_argument('--stretches')
     a = ap.parse_args()
     lines = open(a.src, encoding='utf-8-sig').read().splitlines()
@@ -128,14 +130,21 @@ def main():
                     print(f"cc    {ts(e[0])} -> {ts(snd[k][0])}  {plain(e[3][9])[:24]} = {snd[k][2]}")
                     e[0] = snd[k][0]
 
-    if a.overrides:
-        ovr = {}
-        for l in open(a.overrides):
-            tok = l.split('#')[0].split()
-            if len(tok) >= 2:
-                ovr[round(t(tok[0]), 2)] = t(tok[1])
+    def starts(path):  # "old_start new_start  # comment" lines, keyed on the sign's original start
+        tok = [l.split('#')[0].split() for l in open(path)]
+        return {round(t(x[0]), 2): t(x[1]) for x in tok if len(x) >= 2}
+    if a.auto:
+        auto = starts(a.auto)
         for e in ev:
-            new = ovr.get(round(t(e[3][1]), 2)) if e[2] else None  # keyed on the sign's original start
+            new = auto.get(round(t(e[3][1]), 2)) if e[2] and e[0] == t(e[3][1]) else None
+            prev = max((x for x in ev if x[2] and x[0] < e[0]), key=lambda x: x[0], default=None)
+            if new is not None and not (prev and new < prev[0] + reading(prev[3][9])):
+                print(f"auto  {e[3][1]} -> {ts(new)}  {plain(e[3][9])[:40]}")
+                e[0] = new
+    if a.overrides:
+        ovr = starts(a.overrides)
+        for e in ev:
+            new = ovr.get(round(t(e[3][1]), 2)) if e[2] else None
             if new is not None:
                 print(f"sign  {e[3][1]} -> {ts(new)}  {plain(e[3][9])[:40]}")
                 e[0] = new

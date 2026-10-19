@@ -47,8 +47,8 @@ Get-ChildItem C:\path\to\season\*.mkv | % { python fixep.py $_.FullName }  # Win
 Each file takes about 5-15 s (the shot-change check on lengthened signs and the contact sheets; longer while mpv is playing it, as it runs at low
 priority). What it prints:
 
-- `updated: … (default English: … (signs fixed v6))`: fixed
-- `already fixed (v6): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
+- `updated: … (default English: … (signs fixed v7))`: fixed
+- `already fixed (v7): skipped`: done by the current version; add `--force` to redo it (e.g. after editing its
   overrides). A file fixed by an older version is redone automatically
 - `no non-English audio: skipped`: never touched, e.g. an English film whose SDH has `[DOOR CLOSES]`
 - `… isn't streaming-style …: nothing to fix`: typeset subs (e.g. Crunchyroll), or fewer than 2 caps signs that
@@ -85,14 +85,16 @@ is split: the path you run it on gets the fix and becomes a separate file.
 
 ## Sign start overrides
 
-Signs Netflix held back behind dialogue can't be detected reliably (scene-cut detection got 3/7), so each run
-writes contact sheets to `work/<episode>/sheets/` for checking by eye:
+Netflix holds a sign back while dialogue is on screen. `heldback.py` moves it to the start of its shot when that shot
+began under the dialogue and nothing appeared mid-shot (found 5 of 16 held-back starts in testing, no wrong moves; its
+picks go to `work/<episode>/auto.txt`). Text that fades in, is revealed by motion or a zoom isn't found, so each run
+also writes contact sheets to `work/<episode>/sheets/` for checking by eye:
 
 - a row for every sign that directly follows another line: 16 frames from 2 s before that line to the sign
 - a `shout?` row for any caps line that starts with a CC line carrying a speaker label (and no sound label): it may
   be a translated shout, not drawn text. If no text is drawn in that row, it's dialogue
 
-`index.txt` maps rows to signs and frame times. Real starts go in `work/<episode>/overrides.txt`:
+`index.txt` maps rows to signs and frame times, with `[auto …]` on rows already moved and `[kept: why]` on the rest. Real starts go in `work/<episode>/overrides.txt`:
 
 ```
 # sign_start  new_start

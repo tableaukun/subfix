@@ -16,14 +16,16 @@
 import sys, os, re, json, stat, time, tempfile, subprocess
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fixsigns import t, issign, serialized
+from fixsigns import t, ts, issign, serialized
+import heldback
 
 FRAMES, ROWS, LEAD = 16, 5, 2.0  # frames per sign strip, strips per sheet, seconds before the previous line
 STALE = 15 * 60  # a lock this old is from a killed run (a run takes ~1 min)
-VERSION = 6  # v1: plain "(signs fixed)", before the second review; v2: signs tracked the drawn text (dialogue
+VERSION = 7  # v1: plain "(signs fixed)", before the second review; v2: signs tracked the drawn text (dialogue
              # chains, shot changes, CC end); v3: signs last their reading time; v4: ...unless the shot changes
              # first, and a repeated sign doesn't blink; v5: ...or until the dialogue beside it ends;
-             # v6: a CC sound moves a sign earlier only past dialogue that held it back.
+             # v6: a CC sound moves a sign earlier only past dialogue that held it back; v7: held-back signs
+             # whose shot started under the dialogue start with it (heldback.py).
              # Also bump for scope changes (serialized(), pick()): the clean/failed markers carry the version
 
 def fixed_version(n):  # None: not one of ours; 1: unversioned "(signs fixed)"
@@ -232,7 +234,15 @@ def main():
         ev = [(q[1], q[9], q[2]) for q in (l.split(',', 9) for l in open(eng_ass, encoding='utf-8-sig') if l.startswith('Dialogue:'))]
 
         ovr = os.path.join(wd, 'overrides.txt')  # kept across runs, unlike the rest of the workdir
-        args = [sys.executable, '-I', os.path.join(here, 'fixsigns.py'), eng_ass, fixed] + (['--ref', ref_ass] if ref else []) \
+        auto = os.path.join(wd, 'auto.txt')  # held-back starts found in the video (heldback.py), rebuilt every run
+        try:
+            found = heldback.scan(mkv, ev)
+        except (OSError, subprocess.CalledProcessError) as err:  # a help, not a must: the fix goes on without it
+            found = []
+            print(f'held-back scan failed ({err}), fixing without it')
+        open(auto, 'w').write(''.join(f'{s} {ts(n)}  # {txt[:30]}\n' for s, n, _, txt in found if n is not None))
+        verdict = {s: f'auto {ts(n)}' if n is not None else f'kept: {why}' for s, n, why, _ in found}
+        args = [sys.executable, '-I', os.path.join(here, 'fixsigns.py'), eng_ass, fixed, '--auto', auto] + (['--ref', ref_ass] if ref else []) \
             + (['--cc', cc_ass] if cc else []) + (['--overrides', ovr] if os.path.exists(ovr) else [])
         # twice: first to find where signs get lengthened, then with the shot changes found only there
         wins, cuts = os.path.join(wd, 'stretches.txt'), os.path.join(wd, 'cuts.txt')
@@ -242,7 +252,7 @@ def main():
         print(run(*args, '--cuts', cuts), end='')
 
         try:  # contact sheets are for checking by eye; never let them block the fix
-            rows = sheets(mkv, wd, ev, cc_ass if cc else None)
+            rows = sheets(mkv, wd, ev, cc_ass if cc else None, verdict)
         except (OSError, subprocess.CalledProcessError) as err:
             rows = []
             print(f'contact sheets failed ({err}), fixing anyway')
@@ -268,7 +278,7 @@ def main():
     finally:
         os.remove(held)
 
-def sheets(mkv, wd, ev, cc_ass):
+def sheets(mkv, wd, ev, cc_ass, verdict={}):
     # contact sheets, one row per sign to check by eye, FRAMES evenly spaced:
     # - held back?  sign directly follows another line: from LEAD s before that line to just after the sign's start
     # - shout?      a CC line with a speaker label, e.g. （ミナト）え？, and no sound label starts with it, so the caps
@@ -297,7 +307,8 @@ def sheets(mkv, wd, ev, cc_ass):
         run('ffmpeg', '-nostdin', '-v', 'error', '-ss', f'{a:.3f}', '-t', f'{b - a + step:.3f}', '-i', mkv, '-an', '-sn',
             '-vf', f'fps=1/{step:.4f},scale=240:-2,tile={FRAMES}x1', '-frames:v', '1', '-y', strip)
         strips.append(strip)
-        index.append(f"sheet{n // ROWS + 1:02d} row{n % ROWS + 1}  {why:10}  sign {ss}  frames {a:.2f}+k*{step:.3f}s  {txt[:40]}")
+        index.append(f"sheet{n // ROWS + 1:02d} row{n % ROWS + 1}  {why:10}  sign {ss}  frames {a:.2f}+k*{step:.3f}s  {txt[:40]}"
+                     + (f"  [{verdict[ss]}]" if why == 'held back?' and ss in verdict else ''))
     for g in range(0, len(strips), ROWS):
         grp = strips[g:g + ROWS]
         ins = sum((['-i', s] for s in grp), [])
