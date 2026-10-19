@@ -116,9 +116,12 @@ def rewrite(mkv, make, check):
     # the original is untouched unless every step succeeds. The temp is hidden and not *.mkv, so players and
     # folder loops never pick it up. Returns (new tracks, problem or None)
     d, base = os.path.dirname(mkv), os.path.basename(mkv)
-    for f in os.listdir(d):  # left by killed runs
-        if f.startswith('.' + base + '.') and f.endswith('.subfix-tmp'):
-            os.remove(os.path.join(d, f))
+    try:
+        for f in os.listdir(d):  # left by killed runs
+            if f.startswith('.' + base + '.') and f.endswith('.subfix-tmp'):
+                os.remove(os.path.join(d, f))
+    except OSError:  # e.g. macOS privacy rules allow writing a file by name but not listing the folder
+        pass
     fd, tmp = tempfile.mkstemp(dir=d, prefix='.' + base + '.', suffix='.subfix-tmp')
     os.close(fd)
     try:
