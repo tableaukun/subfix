@@ -141,7 +141,7 @@ qBittorrent: Options → Downloads → **Run external program** → *Run on torr
 prints from the `subfix` folder:
 
 ```
-echo "\"$(python3 -c 'import sys; print(sys.executable)')\" -I \"$PWD/fixep.py\" \"%F\" --log"
+echo "\"$(command -v python3)\" -I \"$PWD/fixep.py\" \"%F\" --log"
 ```
 
 `%F` is the episode, or the folder of a season pack (every MKV in it is fixed). `--log` appends the results to
